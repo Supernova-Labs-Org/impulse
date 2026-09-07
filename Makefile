@@ -1,4 +1,4 @@
-.PHONY: run build build-impulse clean test test-edge test-transport certs certs-selfsigned certs-ca certs-clean certs-verify certs-dir bench-micro bench-macro bench-gate bench-promote-baseline load-scenarios
+.PHONY: run build build-impulse clean test test-edge test-transport certs certs-selfsigned certs-ca certs-clean certs-verify certs-dir
 
 CERTS_DIR := certs
 SAN_CONF := $(CERTS_DIR)/san.conf
@@ -180,22 +180,3 @@ docs-build:
 docs-setup:
 	pip install -r docs-requirements.txt --break-system-packages
 	mkdocs build
-
-bench-micro:
-	./scripts/bench-micro.sh
-
-bench-macro:
-	./scripts/bench-macro.sh
-
-bench-gate:
-	./scripts/bench-gate.sh
-
-bench-promote-baseline:
-	@if [ -z "$(RELEASE)" ]; then \
-		echo "usage: make bench-promote-baseline RELEASE=vX.Y.Z"; \
-		exit 1; \
-	fi
-	./scripts/bench-promote-baseline.sh "$(RELEASE)"
-
-load-scenarios:
-	./scripts/load-scenarios.sh
