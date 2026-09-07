@@ -5,7 +5,6 @@
 //! mechanics stay behind internal subsystem modules.
 #![warn(unreachable_pub)]
 
-pub mod benchmark;
 pub mod body;
 pub mod cid_radix;
 mod constants;
