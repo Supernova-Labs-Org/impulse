@@ -11,7 +11,7 @@ This section is for contributors and maintainers working on the codebase itself.
 - [Testing Strategy](testing-strategy.md) explains what the current suite is protecting.
 - [Invariants](invariants.md) records the behavioral rules contributors should preserve.
 - [Adding Features Safely](adding-features.md) gives the expected workflow for non-trivial changes.
-- [Benchmarking](benchmarking.md) describes the benchmark and regression-gate tooling.
+- [Benchmarking](benchmarking.md) describes local Criterion microbenchmarks.
 - [Roadmap](../roadmap.md) captures the larger direction and missing capability areas.
 - [Changelog](../changelog.md) shows recently landed work and the project’s release narrative.
 

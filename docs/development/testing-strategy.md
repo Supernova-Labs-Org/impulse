@@ -31,14 +31,14 @@ Important coverage areas include:
 - draining and forced close behavior
 - retry, timeout, and error mapping semantics
 
-### Benchmark Suite
+### Local Microbenchmarks
 
-`crates/bench/` is used for:
+Criterion microbenchmarks are available for focused local investigation of:
 
-- micro-benchmarks
-- macro workload models
-- baseline comparison
-- release-regression gating
+- route-index behavior
+- load-balancer selection
+
+They are not part of the CI test suite.
 
 ## What A New Feature Should Usually Add
 

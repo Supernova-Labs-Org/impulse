@@ -1,4 +1,4 @@
-.PHONY: run build build-impulse clean test test-edge test-transport certs certs-selfsigned certs-ca certs-clean certs-verify certs-dir
+.PHONY: run build build-impulse clean test test-edge test-transport bench-route-index bench-load-balancing certs certs-selfsigned certs-ca certs-clean certs-verify certs-dir
 
 CERTS_DIR := certs
 SAN_CONF := $(CERTS_DIR)/san.conf
@@ -22,6 +22,12 @@ test-edge:
 
 test-transport:
 	cargo test -p impulse-transport
+
+bench-route-index:
+	cargo bench -p impulse-edge --bench route_index
+
+bench-load-balancing:
+	cargo bench -p impulse-lb --bench load_balancing
 
 # Certificate generation targets
 certs-dir:
