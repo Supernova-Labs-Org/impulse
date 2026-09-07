@@ -7,6 +7,7 @@ head_sha="${2:-HEAD}"
 full_workspace() {
   printf 'test_scope=workspace\n'
   printf 'test_packages=\n'
+  printf 'edge_tests=true\n'
 }
 
 if [[ -z "${base_sha}" ]] \
@@ -69,6 +70,13 @@ if [[ "${full_workspace_required}" == true || ${#packages[@]} -eq 0 ]]; then
   exit 0
 fi
 
+edge_tests=false
+if [[ -n "${packages[impulse-edge]+present}" ]]; then
+  edge_tests=true
+  unset 'packages[impulse-edge]'
+fi
+
 printf 'test_scope=packages\n'
 printf 'test_packages='
 printf '%s\n' "${!packages[@]}" | sort | paste -sd ' ' -
+printf 'edge_tests=%s\n' "${edge_tests}"

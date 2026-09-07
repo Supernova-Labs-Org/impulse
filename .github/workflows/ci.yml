@@ -23,6 +23,7 @@ jobs:
       packaging: ${{ steps.filter.outputs.packaging }}
       test_scope: ${{ steps.packages.outputs.test_scope }}
       test_packages: ${{ steps.packages.outputs.test_packages }}
+      edge_tests: ${{ steps.packages.outputs.edge_tests }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -118,7 +119,9 @@ jobs:
           TEST_PACKAGES: ${{ needs.changes.outputs.test_packages }}
         run: |
           if [[ "${TEST_SCOPE}" == "workspace" ]]; then
-            cargo test --workspace
+            cargo test --workspace --exclude impulse-edge
+          elif [[ -z "${TEST_PACKAGES}" ]]; then
+            echo "No regular packages selected"
           else
             read -r -a packages <<< "${TEST_PACKAGES}"
             args=()
@@ -127,6 +130,33 @@ jobs:
             done
             cargo test "${args[@]}"
           fi
+
+  edge-tests:
+    runs-on: ubuntu-latest
+    needs: [changes, lint]
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.edge_tests == 'true'
+    env:
+      RUST_TEST_THREADS: 1
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential pkg-config
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+      - name: Cache Rust dependencies and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-ci-${{ runner.os }}
+          key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}
+      - name: Run serialized edge tests
+        timeout-minutes: 20
+        run: cargo test -p impulse-edge
 
   dependency-audit:
     runs-on: ubuntu-latest
