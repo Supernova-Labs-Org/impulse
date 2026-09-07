@@ -1481,14 +1481,13 @@
 <li>draining and forced close behavior</li>
 <li>retry, timeout, and error mapping semantics</li>
 </ul>
-<h3 id="benchmark-suite">Benchmark Suite</h3>
-<p><code>crates/bench/</code> is used for:</p>
+<h3 id="local-microbenchmarks">Local Microbenchmarks</h3>
+<p>Criterion microbenchmarks are available for focused local investigation of:</p>
 <ul>
-<li>micro-benchmarks</li>
-<li>macro workload models</li>
-<li>baseline comparison</li>
-<li>release-regression gating</li>
+<li>route-index behavior</li>
+<li>load-balancer selection</li>
 </ul>
+<p>They are not part of the CI test suite.</p>
 <h2 id="what-a-new-feature-should-usually-add">What A New Feature Should Usually Add</h2>
 <ul>
 <li>unit coverage for the local logic</li>
@@ -1978,10 +1977,10 @@
             Integration Tests
         </a>
         
-        <a href="#benchmark-suite"
+        <a href="#local-microbenchmarks"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
-            data-active="false" data-depth="3" onClick="deferSetActiveTocLink('#benchmark-suite');">
-            Benchmark Suite
+            data-active="false" data-depth="3" onClick="deferSetActiveTocLink('#local-microbenchmarks');">
+            Local Microbenchmarks
         </a>
         
         
