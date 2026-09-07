@@ -302,6 +302,40 @@ impl QUICListener {
         }
     }
 
+    /// Run synchronous, potentially filesystem-touching runtime-reload work
+    /// (config reads, TLS/CA material loading) on Tokio's blocking-thread
+    /// pool instead of the control API's own async worker.
+    ///
+    /// `read_file_with_limit` no longer blocks indefinitely on a FIFO
+    /// (SEC-08), but arbitrary caller-supplied paths can still be slow to
+    /// read (large files, loaded disks, network filesystems); running that
+    /// work here keeps one slow request from starving the shared
+    /// control-plane async workers.
+    ///
+    /// Returns `None` if the blocking task panicked; callers should treat
+    /// that as an internal error rather than propagating the panic into the
+    /// request-handling task.
+    pub(super) async fn run_control_api_blocking<F, T>(work: F) -> Option<T>
+    where
+        F: FnOnce() -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        match tokio::task::spawn_blocking(work).await {
+            Ok(value) => Some(value),
+            Err(err) => {
+                error!("control API blocking task panicked: {}", err);
+                None
+            }
+        }
+    }
+
+    pub(super) fn control_api_internal_error_response() -> Response<Full<Bytes>> {
+        Self::json_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "error": "internal_error" }),
+        )
+    }
+
     pub(super) fn stale_control_api_connection_response() -> Response<Full<Bytes>> {
         Response::builder()
             .status(StatusCode::UNAUTHORIZED)

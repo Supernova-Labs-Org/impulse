@@ -4451,3 +4451,42 @@ async fn reload_listener_certs_is_atomic_when_any_listener_reload_fails() {
         generations_before
     );
 }
+
+#[test]
+fn run_control_api_blocking_does_not_stall_the_async_runtime() {
+    // `current_thread` polls every async task (including timers) on exactly
+    // one thread. If `run_control_api_blocking` ran its closure inline
+    // instead of handing it to Tokio's separate blocking-thread pool, the
+    // 200ms `std::thread::sleep` below would occupy that one thread and the
+    // concurrently spawned 20ms timer could not fire until it finished,
+    // pushing the timer's completion well past 200ms.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("build current-thread runtime");
+
+    let (blocking_result, timer_completed_at, started) = runtime.block_on(async {
+        let started = std::time::Instant::now();
+        let timer_task = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            std::time::Instant::now()
+        });
+
+        let blocking_result = QUICListener::run_control_api_blocking(|| {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            42
+        })
+        .await;
+
+        let timer_completed_at = timer_task.await.expect("concurrent timer task must run");
+        (blocking_result, timer_completed_at, started)
+    });
+
+    assert_eq!(blocking_result, Some(42));
+    assert!(
+        timer_completed_at.duration_since(started) < std::time::Duration::from_millis(150),
+        "a concurrently spawned 20ms timer must complete well before the 200ms \
+         blocking closure finishes, proving the closure ran on Tokio's \
+         blocking-thread pool rather than the single current-thread runtime worker"
+    );
+}

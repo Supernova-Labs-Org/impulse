@@ -87,9 +87,9 @@ impl QUICListener {
                 .clone()
                 .or_else(|| Some("runtime_rollback".to_string())),
         );
-        let rollback = RuntimeActivationService::rollback_generation(
-            &runtime_bundle_handle,
-            RollbackRequest {
+        let Some(rollback) = Self::run_control_api_blocking({
+            let runtime_bundle_handle = Arc::clone(&runtime_bundle_handle);
+            let request = RollbackRequest {
                 target_generation: payload.target_generation,
                 requested_by: payload
                     .requested_by
@@ -100,8 +100,13 @@ impl QUICListener {
                     .or_else(|| Some("runtime_rollback".to_string())),
                 expected_active_generation: payload.expected_active_generation,
                 requested_at_ms: crate::watchdog::time::now_millis(),
-            },
-        );
+            };
+            move || RuntimeActivationService::rollback_generation(&runtime_bundle_handle, request)
+        })
+        .await
+        else {
+            return Self::control_api_internal_error_response();
+        };
         Self::record_control_api_rollback_outcome(&runtime_bundle_handle, &rollback);
         Self::emit_control_api_audit_event(
             &runtime_state.security,
