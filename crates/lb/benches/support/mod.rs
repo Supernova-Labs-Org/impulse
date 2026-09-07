@@ -1,0 +1,79 @@
+use std::collections::HashMap;
+
+use impulse_config::{
+    config::{Backend, Config, Listen, LoadBalancing, RouteMatch, Tls, Upstream},
+    runtime::{RuntimeConfig, RuntimeUpstream},
+};
+use impulse_lb::upstream_pool::UpstreamPool;
+
+pub const BACKEND_COUNTS: [usize; 4] = [1, 10, 100, 1_000];
+pub const STRATEGIES: [(&str, &str); 6] = [
+    ("round_robin", "round-robin"),
+    ("random", "random"),
+    ("consistent_hash", "consistent-hash"),
+    ("sticky_cid", "sticky-cid"),
+    ("least_connections", "least-connections"),
+    ("latency_aware", "latency-aware"),
+];
+
+pub fn runtime_upstream(backend_count: usize, strategy: &str) -> RuntimeUpstream {
+    let mut upstreams = HashMap::new();
+    upstreams.insert(
+        "benchmark".to_string(),
+        Upstream {
+            load_balancing: LoadBalancing {
+                lb_type: strategy.to_string(),
+                key: None,
+            },
+            auth: Default::default(),
+            host_policy: Default::default(),
+            forwarded_headers: Default::default(),
+            tls: None,
+            route: RouteMatch {
+                host: None,
+                path_prefix: Some("/".to_string()),
+                method: None,
+            },
+            backends: (0..backend_count)
+                .map(|index| Backend {
+                    id: format!("backend-{index:05}"),
+                    address: format!("127.0.0.1:{}", 10_000 + index),
+                    weight: 100,
+                    health_check: None,
+                })
+                .collect(),
+        },
+    );
+
+    RuntimeConfig::from_config(&Config {
+        version: 1,
+        listen: Listen {
+            protocol: "http1".to_string(),
+            tls: Tls {
+                cert: "/tmp/benchmark-cert.pem".to_string(),
+                key: "/tmp/benchmark-key.pem".to_string(),
+                ..Tls::default()
+            },
+            ..Listen::default()
+        },
+        listeners: Vec::new(),
+        upstream: upstreams,
+        load_balancing: None,
+        upstream_tls: Default::default(),
+        secrets: Default::default(),
+        log: Default::default(),
+        performance: Default::default(),
+        observability: Default::default(),
+        resilience: Default::default(),
+        security: Default::default(),
+    })
+    .expect("benchmark upstream configuration must normalize")
+    .upstreams
+    .remove("benchmark")
+    .expect("benchmark upstream must exist")
+}
+
+pub fn upstream_pool(backend_count: usize, strategy: &str) -> UpstreamPool {
+    UpstreamPool::from_runtime_upstream(&runtime_upstream(backend_count, strategy))
+        .expect("benchmark upstream pool must build")
+}

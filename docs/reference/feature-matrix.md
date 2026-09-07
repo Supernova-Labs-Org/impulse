@@ -157,7 +157,7 @@ These items are not user-facing features, but they are important product foundat
 | OTLP tracing hooks | `Done` | Optional |
 | Packaging for Docker | `Done` | Present |
 | Packaging for Debian/systemd | `Done` | Present |
-| Benchmark suite | `Done` | Dedicated crate and scripts |
+| Local Criterion microbenchmarks | `Done` | Focused route-index and load-balancing benchmarks |
 | Production runbook maturity | `Partial` | Present, but still being tightened |
 
 ## Related Pages

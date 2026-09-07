@@ -14,11 +14,11 @@ This page maps the repository by crate and by major responsibility so contributo
 | `crates/lb/` | Backend health state and load-balancing algorithms |
 | `crates/utils/` | Logging and tracing helpers |
 | `crates/errors/` | Shared error taxonomy |
-| `crates/bench/` | Benchmark harness and regression-gate tooling |
+| `crates/edge/benches/`, `crates/lb/benches/` | Local Criterion microbenchmarks |
 | `config/` | Example configs |
 | `docs/` | Operator, reference, architecture, and contributor docs |
 | `packaging/` | Docker, Debian, and systemd-related packaging assets |
-| `scripts/` | Load, benchmark, and operational helper scripts |
+| `scripts/` | Operational helper scripts |
 
 ## Main Runtime Boundaries
 

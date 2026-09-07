@@ -33,7 +33,6 @@ cargo test --workspace
     crates/lb/         load balancing algorithms (random, round-robin, consistent-hash, least-connections, latency-aware, sticky-cid)
     crates/utils/      logging, TLS helpers
     crates/errors/     shared error types
-    crates/bench/      benchmarking harness
 ```
 
 ### Submitting Patches

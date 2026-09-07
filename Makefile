@@ -1,4 +1,4 @@
-.PHONY: run build build-impulse clean test test-edge test-transport certs certs-selfsigned certs-ca certs-clean certs-verify certs-dir bench-micro bench-macro bench-gate bench-promote-baseline load-scenarios
+.PHONY: run build build-impulse clean test test-edge test-transport bench-route-index bench-load-balancing certs certs-selfsigned certs-ca certs-clean certs-verify certs-dir
 
 CERTS_DIR := certs
 SAN_CONF := $(CERTS_DIR)/san.conf
@@ -22,6 +22,12 @@ test-edge:
 
 test-transport:
 	cargo test -p impulse-transport
+
+bench-route-index:
+	cargo bench -p impulse-edge --bench route_index
+
+bench-load-balancing:
+	cargo bench -p impulse-lb --bench load_balancing
 
 # Certificate generation targets
 certs-dir:
@@ -180,22 +186,3 @@ docs-build:
 docs-setup:
 	pip install -r docs-requirements.txt --break-system-packages
 	mkdocs build
-
-bench-micro:
-	./scripts/bench-micro.sh
-
-bench-macro:
-	./scripts/bench-macro.sh
-
-bench-gate:
-	./scripts/bench-gate.sh
-
-bench-promote-baseline:
-	@if [ -z "$(RELEASE)" ]; then \
-		echo "usage: make bench-promote-baseline RELEASE=vX.Y.Z"; \
-		exit 1; \
-	fi
-	./scripts/bench-promote-baseline.sh "$(RELEASE)"
-
-load-scenarios:
-	./scripts/load-scenarios.sh

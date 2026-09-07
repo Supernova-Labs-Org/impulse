@@ -4,7 +4,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bench]]
+name = "load_balancing"
+harness = false
+
 [dependencies]
 log.workspace = true
 rand.workspace = true
 impulse-config = { path = "../config" }
+
+[dev-dependencies]
+criterion = "0.5"
