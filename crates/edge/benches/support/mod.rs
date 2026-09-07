@@ -19,18 +19,24 @@ pub struct RouteIndexFixture {
 
 impl RouteIndexFixture {
     pub fn new(route_count: usize) -> Self {
-        assert!(route_count >= 3, "route benchmark needs at least three routes");
+        assert!(
+            route_count >= 3,
+            "route benchmark needs at least three routes"
+        );
 
         let mut upstreams = HashMap::with_capacity(route_count);
         for index in 0..route_count {
             let name = format!("route-{index:05}");
             upstreams.insert(
                 name.clone(),
-                upstream(name, RouteMatch {
-                    host: None,
-                    path_prefix: Some(format!("/routes/{index:05}")),
-                    method: None,
-                }),
+                upstream(
+                    name,
+                    RouteMatch {
+                        host: None,
+                        path_prefix: Some(format!("/routes/{index:05}")),
+                        method: None,
+                    },
+                ),
             );
         }
 

@@ -67,15 +67,6 @@ pub(crate) const RESPONSE_CHUNK_BYTES_LIMIT: usize = 16 * 1024;
 pub(crate) const SCID_ROTATION_INTERVAL_SECS: u64 = 60;
 pub(crate) const SCID_ROTATION_PACKET_THRESHOLD: u64 = 8;
 
-pub(crate) const BENCH_CONN_PRIMARY_ID_LEN_BYTES: usize = 16;
-pub(crate) const BENCH_CONN_PRIMARY_ID_PREFIX_BYTES: usize = 8;
-pub(crate) const BENCH_CONN_ALIAS_SUFFIX: [u8; 4] = [0xaa, 0xbb, 0xcc, 0xdd];
-pub(crate) const BENCH_CONN_MISS_ID_LEN_BYTES: usize = 24;
-pub(crate) const BENCH_CONN_MISS_ID_FILL: u8 = 0xff;
-pub(crate) const BENCH_CONN_PEER_BASE_PORT: u16 = 20_000;
-pub(crate) const BENCH_CONN_PEER_PORT_SPAN: usize = 20_000;
-pub(crate) const BENCH_CONN_MISS_PORT: u16 = u16::MAX;
-
 pub(crate) fn scid_rotation_interval() -> std::time::Duration {
     std::time::Duration::from_secs(SCID_ROTATION_INTERVAL_SECS)
 }
