@@ -45,7 +45,12 @@ smallvec.workspace = true
 name = "regression"
 path = "tests/regression/main.rs"
 
+[[bench]]
+name = "route_index"
+harness = false
+
 [dev-dependencies]
+criterion = "0.5"
 rand.workspace = true
 rcgen = "0.12"
 tempfile = "3"
