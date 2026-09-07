@@ -1496,6 +1496,61 @@ fn control_api_authorization_generation_detects_drift_during_delayed_body_collec
     );
 }
 
+#[test]
+fn control_api_security_differs_detects_revoked_bearer_token() {
+    let dir = tempdir().expect("tempdir");
+    let (cert, key) = write_test_cert_for_name(dir.path(), "server", "api.example.com");
+    let mut with_admin_token = test_config(cert, key);
+    with_admin_token.observability.control_api.enabled = true;
+    with_admin_token
+        .observability
+        .control_api
+        .auth
+        .bearer_tokens = vec![ControlApiBearerToken {
+        token: "old-admin-token".to_string(),
+        token_ref: None,
+        role: ControlApiRole::Admin,
+        actor_id: Some("admin".to_string()),
+    }];
+
+    let mut revoked = with_admin_token.clone();
+    revoked.observability.control_api.auth.bearer_tokens = vec![ControlApiBearerToken {
+        token: "operator-token".to_string(),
+        token_ref: None,
+        role: ControlApiRole::Operator,
+        actor_id: Some("operator".to_string()),
+    }];
+
+    assert!(
+        super::reload::rollback::control_api_security_differs(
+            &revoked.observability.control_api,
+            &with_admin_token.observability.control_api
+        ),
+        "restoring a generation whose bearer tokens include a since-revoked admin \
+         credential must be classified as a control-API security change"
+    );
+}
+
+#[test]
+fn control_api_security_differs_ignores_unrelated_application_changes() {
+    let dir = tempdir().expect("tempdir");
+    let (cert, key) = write_test_cert_for_name(dir.path(), "server", "api.example.com");
+    let mut current = test_config(cert, key);
+    current.observability.control_api.enabled = true;
+    current.observability.control_api.runtime_path = "/runtime-current".to_string();
+
+    let mut target = current.clone();
+    target.observability.control_api.runtime_path = "/runtime-target".to_string();
+
+    assert!(
+        !super::reload::rollback::control_api_security_differs(
+            &current.observability.control_api,
+            &target.observability.control_api
+        ),
+        "a rollback that only changes a non-security field must not be blocked"
+    );
+}
+
 #[tokio::test]
 async fn control_api_gate_returns_forbidden_for_under_scoped_identity() {
     let dir = tempdir().expect("tempdir");

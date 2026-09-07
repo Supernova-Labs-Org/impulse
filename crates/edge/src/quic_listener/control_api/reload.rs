@@ -29,7 +29,7 @@ mod activate;
 mod parse;
 mod preview;
 mod request_body;
-mod rollback;
+pub(super) mod rollback;
 
 impl QUICListener {
     pub(super) fn apply_live_log_level_reload(
