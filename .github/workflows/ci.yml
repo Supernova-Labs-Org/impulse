@@ -10,8 +10,55 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      docs: ${{ steps.filter.outputs.docs }}
+      packaging: ${{ steps.filter.outputs.packaging }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Classify changes
+        id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            rust:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '**/Cargo.toml'
+              - 'impulse/**'
+              - 'crates/**'
+              - 'config/**'
+              - '.cargo/**'
+              - 'rust-toolchain'
+              - 'rust-toolchain.toml'
+              - 'rustfmt.toml'
+              - 'clippy.toml'
+              - 'Makefile'
+              - '.github/workflows/ci.yml'
+            docs:
+              - 'docs/**'
+              - 'assets/**'
+              - 'README.md'
+              - 'CONTRIBUTING.md'
+              - 'mkdocs.yml'
+              - 'docs-requirements.txt'
+            packaging:
+              - 'packaging/**'
+              - 'deploy/**'
+
   lint:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -36,7 +83,8 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    needs: lint
+    needs: [changes, lint]
+    if: needs.changes.outputs.rust == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -54,7 +102,8 @@ jobs:
 
   dependency-audit:
     runs-on: ubuntu-latest
-    needs: lint
+    needs: [changes, lint]
+    if: needs.changes.outputs.rust == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
