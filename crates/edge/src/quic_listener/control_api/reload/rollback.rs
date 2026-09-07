@@ -57,7 +57,7 @@ impl QUICListener {
             )
             && !identity
                 .as_ref()
-                .is_some_and(|identity| identity.roles.iter().any(|role| *role == AdminRole::Admin))
+                .is_some_and(|identity| identity.roles.contains(&AdminRole::Admin))
         {
             return Self::json_response(
                 StatusCode::FORBIDDEN,
