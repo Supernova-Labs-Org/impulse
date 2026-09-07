@@ -4,7 +4,12 @@ on:
   push:
     branches:
       - master
-  workflow_dispatch:   # 👈 add this line
+    paths:
+      - 'docs/**'
+      - 'README.md'
+      - 'mkdocs.yml'
+      - 'docs-requirements.txt'
+  workflow_dispatch:
 
 permissions:
   contents: write

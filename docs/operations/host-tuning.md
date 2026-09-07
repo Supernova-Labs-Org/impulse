@@ -26,7 +26,6 @@ Validate these areas first:
 ## Recommended Starting Posture
 
 - start from the Linux baseline in [Production Deployment](../deployment/production.md)
-- use `scripts/sysctl-linux-network-tuning.sh` only as a baseline helper, not as a final answer
 - keep the metrics and Control API surfaces reachable from operations tooling but isolated from public traffic
 - isolate Impulse from unrelated batch or noisy-neighbor workloads where possible
 

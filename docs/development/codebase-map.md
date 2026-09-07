@@ -18,7 +18,6 @@ This page maps the repository by crate and by major responsibility so contributo
 | `config/` | Example configs |
 | `docs/` | Operator, reference, architecture, and contributor docs |
 | `packaging/` | Docker, Debian, and systemd-related packaging assets |
-| `scripts/` | Operational helper scripts |
 
 ## Main Runtime Boundaries
 

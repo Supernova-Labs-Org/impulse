@@ -81,7 +81,7 @@ Before rollout, set and verify:
 - privileged-port bind strategy
 - conntrack behavior, if present
 
-Use [Host Tuning](../operations/host-tuning.md) for the tuning model and `scripts/sysctl-linux-network-tuning.sh` only as a starting helper.
+Use [Host Tuning](../operations/host-tuning.md) for the tuning model.
 
 Example `sysctl` baseline:
 
