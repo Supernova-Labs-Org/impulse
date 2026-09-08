@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use super::{request_body::ControlApiRuntimeRollbackPayload, *};
+use super::{admin_identity::AdminRole, request_body::ControlApiRuntimeRollbackPayload, *};
 
 impl QUICListener {
     pub(in crate::quic_listener::control_api) async fn handle_control_api_runtime_rollback(
@@ -44,6 +44,30 @@ impl QUICListener {
         if !authorization_is_current {
             return Self::stale_control_api_connection_response();
         }
+        let current_bundle = runtime_bundle_handle.current_view();
+        if let Some(target_bundle) =
+            runtime_bundle_handle.rollback_candidate(payload.target_generation)
+            && control_api_security_differs(
+                &current_bundle
+                    .bundle()
+                    .runtime_config
+                    .observability
+                    .control_api,
+                &target_bundle.runtime_config.observability.control_api,
+            )
+            && !identity
+                .as_ref()
+                .is_some_and(|identity| identity.roles.contains(&AdminRole::Admin))
+        {
+            return Self::json_response(
+                StatusCode::FORBIDDEN,
+                json!({
+                    "rolled_back": false,
+                    "error": "forbidden",
+                    "reason": "rollback_changes_control_api_security",
+                }),
+            );
+        }
         let current_generation = runtime_bundle_handle.current_generation();
         Self::emit_control_api_audit_event(
             &runtime_state.security,
@@ -63,9 +87,9 @@ impl QUICListener {
                 .clone()
                 .or_else(|| Some("runtime_rollback".to_string())),
         );
-        let rollback = RuntimeActivationService::rollback_generation(
-            &runtime_bundle_handle,
-            RollbackRequest {
+        let Some(rollback) = Self::run_control_api_blocking({
+            let runtime_bundle_handle = Arc::clone(&runtime_bundle_handle);
+            let request = RollbackRequest {
                 target_generation: payload.target_generation,
                 requested_by: payload
                     .requested_by
@@ -76,8 +100,13 @@ impl QUICListener {
                     .or_else(|| Some("runtime_rollback".to_string())),
                 expected_active_generation: payload.expected_active_generation,
                 requested_at_ms: crate::watchdog::time::now_millis(),
-            },
-        );
+            };
+            move || RuntimeActivationService::rollback_generation(&runtime_bundle_handle, request)
+        })
+        .await
+        else {
+            return Self::control_api_internal_error_response();
+        };
         Self::record_control_api_rollback_outcome(&runtime_bundle_handle, &rollback);
         Self::emit_control_api_audit_event(
             &runtime_state.security,
@@ -138,6 +167,19 @@ impl QUICListener {
             );
         }
     }
+}
+
+pub(in crate::quic_listener::control_api) fn control_api_security_differs(
+    current: &impulse_config::config::ControlApi,
+    target: &impulse_config::config::ControlApi,
+) -> bool {
+    current.auth_token != target.auth_token
+        || current.auth_token_ref != target.auth_token_ref
+        || current.tls != target.tls
+        || current.auth != target.auth
+        || current.authorization != target.authorization
+        || current.ip_allowlist != target.ip_allowlist
+        || current.audit != target.audit
 }
 
 pub(super) fn rollback_result_status(rollback: &RollbackResult) -> StatusCode {

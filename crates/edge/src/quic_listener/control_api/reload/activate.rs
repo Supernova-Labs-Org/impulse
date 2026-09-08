@@ -240,11 +240,22 @@ impl QUICListener {
             &reload_input,
         );
         let current_log_level = runtime.startup().log_config.level.clone();
-        let activation = RuntimeActivationService::activate_reload(
-            &runtime_bundle_handle,
-            activation_request,
-            reload_input,
-        );
+        let Some(activation) = Self::run_control_api_blocking({
+            let runtime_bundle_handle = Arc::clone(&runtime_bundle_handle);
+            move || {
+                RuntimeActivationService::activate_reload(
+                    &runtime_bundle_handle,
+                    activation_request,
+                    reload_input,
+                )
+            }
+        })
+        .await
+        else {
+            return Err(ControlApiActivationError::Response(Box::new(
+                Self::control_api_internal_error_response(),
+            )));
+        };
         Self::record_control_api_activation_outcome(&runtime_bundle_handle, &activation);
         Self::emit_control_api_audit_event(
             &runtime_state.security,

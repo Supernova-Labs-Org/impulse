@@ -1,8 +1,11 @@
 use std::{
-    fs::File,
+    fs::{File, OpenOptions},
     io::{self, Read},
     path::Path,
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 
 #[derive(Debug)]
 pub(crate) enum BoundedFileReadError {
@@ -33,7 +36,16 @@ pub(crate) fn read_file_with_limit(
     path: impl AsRef<Path>,
     max_bytes: u64,
 ) -> Result<Vec<u8>, BoundedFileReadError> {
-    let file = File::open(path).map_err(BoundedFileReadError::Io)?;
+    let path = path.as_ref();
+    if !std::fs::metadata(path)
+        .map_err(BoundedFileReadError::Io)?
+        .file_type()
+        .is_file()
+    {
+        return Err(BoundedFileReadError::NotAFile);
+    }
+
+    let file = open_regular_file(path).map_err(BoundedFileReadError::Io)?;
     let metadata = file.metadata().map_err(BoundedFileReadError::Io)?;
     if !metadata.is_file() {
         return Err(BoundedFileReadError::NotAFile);
@@ -46,6 +58,23 @@ pub(crate) fn read_file_with_limit(
     )
 }
 
+fn open_regular_file(path: &Path) -> io::Result<File> {
+    #[cfg(unix)]
+    {
+        // Opening a FIFO with O_NONBLOCK returns immediately; the descriptor
+        // metadata check above and below then reject it as a non-file.
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path)
+    }
+
+    #[cfg(not(unix))]
+    {
+        OpenOptions::new().read(true).open(path)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -54,6 +83,9 @@ mod tests {
     };
 
     use tempfile::tempdir;
+
+    #[cfg(unix)]
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
 
     use super::{BoundedFileReadError, read_file_with_limit, read_with_limit};
 
@@ -112,6 +144,19 @@ mod tests {
         let err = read_file_with_limit(&path, 64).expect_err("oversized file must be rejected");
 
         assert!(matches!(err, BoundedFileReadError::TooLarge));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_file_with_limit_rejects_fifo_without_blocking() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("config.fifo");
+        let path_c = CString::new(path.as_os_str().as_bytes()).expect("fifo path");
+        let result = unsafe { libc::mkfifo(path_c.as_ptr(), 0o600) };
+        assert_eq!(result, 0, "mkfifo failed: {}", io::Error::last_os_error());
+
+        let err = read_file_with_limit(&path, 64).expect_err("FIFO must be rejected");
+        assert!(matches!(err, BoundedFileReadError::NotAFile));
     }
 
     #[test]
