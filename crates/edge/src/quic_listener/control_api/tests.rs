@@ -1853,7 +1853,7 @@ fn control_api_dual_auth_identity_rejects_disagreeing_principals() {
 }
 
 #[test]
-fn control_api_dual_auth_identity_cross_checks_bearer_actor_id_against_mtls_san() {
+fn control_api_dual_auth_identity_rejects_bearer_actor_from_other_mtls_namespace() {
     let identity_source = super::security::ControlApiIdentitySourcePolicy {
         kind: "mtls_san_uri".to_string(),
         role_attribute: None,
@@ -1881,14 +1881,9 @@ fn control_api_dual_auth_identity_cross_checks_bearer_actor_id_against_mtls_san(
         Some(request_context),
         Some(token_match),
         Some(&identity_source),
-    )
-    .expect("dual auth identity");
-
-    assert_eq!(identity.actor_id.as_deref(), Some("admin.example.com"));
-    assert_eq!(
-        identity.roles,
-        vec![super::admin_identity::AdminRole::Operator]
     );
+
+    assert!(identity.is_none());
 }
 
 #[test]

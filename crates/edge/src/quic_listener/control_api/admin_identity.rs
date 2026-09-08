@@ -77,51 +77,28 @@ pub(super) struct AdminTokenMatch {
     pub(super) role: AdminRole,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AdminPrincipalNamespace {
+    CanonicalActor,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AdminPrincipal {
+    namespace: AdminPrincipalNamespace,
+    value: String,
+}
+
 impl QUICListener {
-    fn mtls_identity_principals(mtls: &AdminMtlsIdentity) -> BTreeSet<&str> {
-        let mut principals = BTreeSet::new();
-        if let Some(subject) = mtls.subject.as_deref() {
-            principals.insert(subject);
-        }
-        if let Some(common_name) = mtls.common_name.as_deref() {
-            principals.insert(common_name);
-        }
-        for san_dns in &mtls.san_dns {
-            principals.insert(san_dns.as_str());
-        }
-        for san_uri in &mtls.san_uri {
-            principals.insert(san_uri.as_str());
-        }
-        principals
-    }
-
-    fn token_actor_matches_mtls_identity(token_actor_id: &str, mtls: &AdminMtlsIdentity) -> bool {
-        Self::mtls_identity_principals(mtls)
-            .into_iter()
-            .any(|principal| principal == token_actor_id)
-    }
-
     fn reconcile_dual_auth_actor_id(
-        token_actor_id: Option<String>,
-        mtls_actor_id: Option<String>,
-        mtls_identity: Option<&AdminMtlsIdentity>,
+        token_principal: Option<AdminPrincipal>,
+        mtls_principal: Option<AdminPrincipal>,
     ) -> Option<String> {
-        match (token_actor_id, mtls_actor_id, mtls_identity) {
-            (Some(token_actor_id), Some(mtls_actor_id), Some(mtls_identity)) => ((token_actor_id
-                == mtls_actor_id)
-                || Self::token_actor_matches_mtls_identity(&token_actor_id, mtls_identity))
-            .then_some(token_actor_id),
-            (Some(token_actor_id), Some(mtls_actor_id), None) => {
-                (token_actor_id == mtls_actor_id).then_some(token_actor_id)
-            }
-            (Some(token_actor_id), None, Some(mtls_identity)) => {
-                Self::token_actor_matches_mtls_identity(&token_actor_id, mtls_identity)
-                    .then_some(token_actor_id)
-            }
-            (Some(token_actor_id), None, None) => Some(token_actor_id),
-            (None, Some(mtls_actor_id), _) => Some(mtls_actor_id),
-            (None, None, Some(_)) => None,
-            (None, None, None) => None,
+        match (token_principal, mtls_principal) {
+            (Some(token), Some(mtls)) if token == mtls => Some(token.value),
+            (Some(_), Some(_)) => None,
+            (Some(token), None) => Some(token.value),
+            (None, Some(mtls)) => Some(mtls.value),
+            (None, None) => None,
         }
     }
 
@@ -298,15 +275,18 @@ impl QUICListener {
 
         let mut roles = BTreeSet::new();
         let mut mechanisms = Vec::new();
-        let mut token_actor_id = None;
+        let mut token_principal = None;
         let mut effective_role_limit = None;
         if let Some(token) = token_match {
             mechanisms.push(AdminAuthnMechanism::BearerToken);
             roles.insert(token.role);
             effective_role_limit = Some(token.role);
-            token_actor_id = token.actor_id;
+            token_principal = token.actor_id.map(|value| AdminPrincipal {
+                namespace: AdminPrincipalNamespace::CanonicalActor,
+                value,
+            });
         }
-        let mut mtls_actor_id = None;
+        let mut mtls_principal = None;
         if let Some(mtls) = mtls_identity.as_ref() {
             mechanisms.push(AdminAuthnMechanism::MutualTls);
             for role in &mtls.roles {
@@ -319,18 +299,20 @@ impl QUICListener {
                         .unwrap_or(mtls_role_limit),
                 );
             }
-            mtls_actor_id = Self::actor_id_from_mtls_identity(mtls, identity_source);
+            mtls_principal =
+                Self::actor_id_from_mtls_identity(mtls, identity_source).map(|value| {
+                    AdminPrincipal {
+                        namespace: AdminPrincipalNamespace::CanonicalActor,
+                        value,
+                    }
+                });
         }
 
         let roles = match effective_role_limit {
             Some(role_limit) if mechanisms.len() > 1 => vec![role_limit],
             _ => roles.into_iter().collect(),
         };
-        let actor_id = Self::reconcile_dual_auth_actor_id(
-            token_actor_id,
-            mtls_actor_id,
-            mtls_identity.as_ref(),
-        );
+        let actor_id = Self::reconcile_dual_auth_actor_id(token_principal, mtls_principal);
         if mechanisms.len() > 1 && actor_id.is_none() {
             // Presenting two authentication mechanisms is an assertion that
             // they represent the same administrator. Never turn an
