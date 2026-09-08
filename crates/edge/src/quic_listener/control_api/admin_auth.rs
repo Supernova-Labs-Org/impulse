@@ -173,12 +173,20 @@ impl QUICListener {
             None => None,
         };
 
+        let has_bearer = token_match.is_some();
+        let has_mtls = request_ctx
+            .as_ref()
+            .and_then(|context| context.mtls_identity.as_ref())
+            .is_some();
         match Self::build_admin_identity(
             request_ctx,
             token_match,
             security.identity_source.as_ref(),
         ) {
             Some(identity) => AuthenticationOutcome::Authenticated(identity),
+            None if has_bearer && has_mtls => {
+                AuthenticationOutcome::Invalid("conflicting_authentication_principals")
+            }
             None => AuthenticationOutcome::Missing,
         }
     }

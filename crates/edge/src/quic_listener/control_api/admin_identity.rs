@@ -331,6 +331,12 @@ impl QUICListener {
             mtls_actor_id,
             mtls_identity.as_ref(),
         );
+        if mechanisms.len() > 1 && actor_id.is_none() {
+            // Presenting two authentication mechanisms is an assertion that
+            // they represent the same administrator. Never turn an
+            // unreconciled pair into an anonymous-but-authorized identity.
+            return None;
+        }
 
         Some(AdminIdentity {
             actor_id,

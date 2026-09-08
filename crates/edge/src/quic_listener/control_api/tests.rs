@@ -1826,7 +1826,7 @@ fn control_api_dual_auth_identity_keeps_token_role_when_mtls_has_no_role_mapping
 }
 
 #[test]
-fn control_api_dual_auth_identity_clears_actor_id_when_principals_disagree() {
+fn control_api_dual_auth_identity_rejects_disagreeing_principals() {
     let request_context = super::admin_identity::ControlApiRequestContext {
         peer_addr: "127.0.0.1:9443".parse().expect("peer socket addr"),
         mtls_identity: Some(super::admin_identity::AdminMtlsIdentity {
@@ -1847,14 +1847,9 @@ fn control_api_dual_auth_identity_clears_actor_id_when_principals_disagree() {
     };
 
     let identity =
-        QUICListener::build_admin_identity(Some(request_context), Some(token_match), None)
-            .expect("dual auth identity");
+        QUICListener::build_admin_identity(Some(request_context), Some(token_match), None);
 
-    assert_eq!(
-        identity.roles,
-        vec![super::admin_identity::AdminRole::Viewer]
-    );
-    assert!(identity.actor_id.is_none());
+    assert!(identity.is_none());
 }
 
 #[test]
@@ -1897,7 +1892,7 @@ fn control_api_dual_auth_identity_cross_checks_bearer_actor_id_against_mtls_san(
 }
 
 #[test]
-fn control_api_dual_auth_identity_clears_bearer_actor_id_when_no_mtls_principal_matches() {
+fn control_api_dual_auth_identity_rejects_when_no_mtls_principal_matches() {
     let identity_source = super::security::ControlApiIdentitySourcePolicy {
         kind: "mtls_san_uri".to_string(),
         role_attribute: None,
@@ -1925,14 +1920,9 @@ fn control_api_dual_auth_identity_clears_bearer_actor_id_when_no_mtls_principal_
         Some(request_context),
         Some(token_match),
         Some(&identity_source),
-    )
-    .expect("dual auth identity");
-
-    assert!(identity.actor_id.is_none());
-    assert_eq!(
-        identity.roles,
-        vec![super::admin_identity::AdminRole::Operator]
     );
+
+    assert!(identity.is_none());
 }
 
 #[test]
