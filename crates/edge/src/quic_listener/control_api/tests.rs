@@ -4496,3 +4496,70 @@ fn run_control_api_blocking_does_not_stall_the_async_runtime() {
          blocking-thread pool rather than the single current-thread runtime worker"
     );
 }
+
+fn authenticated_identity(actor_id: &str) -> super::admin_identity::AdminIdentity {
+    super::admin_identity::AdminIdentity {
+        actor_id: Some(actor_id.to_string()),
+        authn_mechanisms: vec![super::admin_identity::AdminAuthnMechanism::BearerToken],
+        roles: vec![super::admin_identity::AdminRole::Operator],
+        peer_addr: None,
+        mtls_subject: None,
+        mtls_san: Vec::new(),
+    }
+}
+
+#[test]
+fn control_api_actor_ignores_caller_supplied_requested_by_for_validate_and_preview() {
+    // An attacker-controlled JSON body attempting to attribute the change to
+    // "another-admin". The field only ever deserializes into the annotation
+    // slot; it must never reach `ActivationRequest.requested_by`.
+    let body: super::reload::request_body::ControlApiRuntimePlanRequest =
+        serde_json::from_str(r#"{"requested_by": "another-admin"}"#).expect("plan request json");
+
+    let real_identity = authenticated_identity("real-operator");
+    let activation_request = QUICListener::control_api_activation_request(
+        &body,
+        0,
+        "runtime_validate",
+        Some(&real_identity),
+    );
+
+    assert_eq!(
+        activation_request.requested_by.as_deref(),
+        Some("real-operator"),
+        "the authenticated actor must be recorded, not the caller-supplied requested_by"
+    );
+}
+
+#[test]
+fn control_api_actor_falls_back_to_generic_label_without_an_identity() {
+    let body: super::reload::request_body::ControlApiRuntimePlanRequest =
+        serde_json::from_str(r#"{"requested_by": "another-admin"}"#).expect("plan request json");
+
+    let activation_request =
+        QUICListener::control_api_activation_request(&body, 0, "runtime_validate", None);
+
+    assert_eq!(
+        activation_request.requested_by.as_deref(),
+        Some("control_api"),
+        "an unauthenticated/unknown identity must record the generic actor label, \
+         never the caller-supplied requested_by"
+    );
+}
+
+#[test]
+fn control_api_actor_ignores_caller_supplied_requested_by_for_rollback() {
+    let payload: super::reload::request_body::ControlApiRuntimeRollbackPayload =
+        serde_json::from_str(r#"{"target_generation": 1, "requested_by": "another-admin"}"#)
+            .expect("rollback payload json");
+    assert_eq!(payload.target_generation, 1);
+
+    let real_identity = authenticated_identity("real-admin");
+    let requested_by = QUICListener::control_api_actor(Some(&real_identity));
+
+    assert_eq!(
+        requested_by.as_deref(),
+        Some("real-admin"),
+        "rollback must record the authenticated actor, not the caller-supplied requested_by"
+    );
+}

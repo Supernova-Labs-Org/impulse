@@ -118,7 +118,7 @@ impl QUICListener {
         }
     }
 
-    pub(super) fn control_api_activation_request(
+    pub(in crate::quic_listener::control_api) fn control_api_activation_request(
         payload: &ControlApiRuntimePlanRequest,
         current_generation: u64,
         default_reason: &str,
@@ -136,7 +136,9 @@ impl QUICListener {
         }
     }
 
-    pub(super) fn control_api_actor(identity: Option<&AdminIdentity>) -> Option<String> {
+    pub(in crate::quic_listener::control_api) fn control_api_actor(
+        identity: Option<&AdminIdentity>,
+    ) -> Option<String> {
         identity
             .and_then(|identity| identity.actor_id.clone())
             .or_else(|| Some("control_api".to_string()))
