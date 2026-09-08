@@ -216,6 +216,7 @@ impl QUICListener {
             &plan_request,
             runtime.generation(),
             default_reason,
+            identity.as_ref(),
         );
         let reload_input =
             Self::control_api_reload_config_input(&runtime, plan_request.config_path);

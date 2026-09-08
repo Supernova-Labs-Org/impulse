@@ -10,7 +10,8 @@ pub(super) const MAX_CONTROL_API_JSON_BODY_BYTES: usize = 64 * 1024;
 #[derive(Default, Deserialize)]
 pub(super) struct ControlApiRuntimePlanRequest {
     pub(super) config_path: Option<String>,
-    pub(super) requested_by: Option<String>,
+    #[serde(rename = "requested_by")]
+    pub(super) _requested_by_annotation: Option<String>,
     pub(super) reason: Option<String>,
     pub(super) expected_generation: Option<u64>,
 }
@@ -18,7 +19,8 @@ pub(super) struct ControlApiRuntimePlanRequest {
 #[derive(Deserialize)]
 pub(super) struct ControlApiRuntimeRollbackPayload {
     pub(super) target_generation: u64,
-    pub(super) requested_by: Option<String>,
+    #[serde(rename = "requested_by")]
+    pub(super) _requested_by_annotation: Option<String>,
     pub(super) reason: Option<String>,
     pub(super) expected_active_generation: Option<u64>,
 }
