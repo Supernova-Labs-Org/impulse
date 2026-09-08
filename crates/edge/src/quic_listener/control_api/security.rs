@@ -262,66 +262,110 @@ impl ControlApiIpAllowlistPolicy {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(in crate::quic_listener) enum SourceIpExtractionError {
+    MalformedForwardingHeaders,
+}
+
 pub(in crate::quic_listener) fn source_ip_from_request<B>(
     request: &::http::Request<B>,
     peer_ip: IpAddr,
     trust_proxy_headers: bool,
     trusted_proxy_matcher: Option<&ControlApiIpAllowlistMatcher>,
-) -> IpAddr {
+) -> Result<IpAddr, SourceIpExtractionError> {
     if !trust_proxy_headers
         || !trusted_proxy_matcher.is_some_and(|matcher| matcher.contains(peer_ip))
     {
-        return peer_ip;
+        return Ok(peer_ip);
     }
 
-    request
-        .headers()
-        .get("forwarded")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| parse_forwarded_for(value, trusted_proxy_matcher))
-        .or_else(|| {
-            request
-                .headers()
-                .get("x-forwarded-for")
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| parse_x_forwarded_for(value, trusted_proxy_matcher))
-        })
-        .unwrap_or(peer_ip)
+    let forwarded = request.headers().get_all("forwarded");
+    let x_forwarded_for = request.headers().get_all("x-forwarded-for");
+    let has_forwarded = forwarded.iter().next().is_some();
+    let has_x_forwarded_for = x_forwarded_for.iter().next().is_some();
+
+    if has_forwarded == has_x_forwarded_for {
+        // No trusted header means the peer is the source. Both families at
+        // once are ambiguous: the proxy must select and sanitize one family.
+        return if !has_forwarded {
+            Ok(peer_ip)
+        } else {
+            Err(SourceIpExtractionError::MalformedForwardingHeaders)
+        };
+    }
+
+    if has_forwarded {
+        parse_forwarded_for(
+            forwarded.iter().map(|value| {
+                value
+                    .to_str()
+                    .map_err(|_| SourceIpExtractionError::MalformedForwardingHeaders)
+            }),
+            trusted_proxy_matcher,
+        )
+    } else {
+        parse_x_forwarded_for(
+            x_forwarded_for.iter().map(|value| {
+                value
+                    .to_str()
+                    .map_err(|_| SourceIpExtractionError::MalformedForwardingHeaders)
+            }),
+            trusted_proxy_matcher,
+        )
+    }
 }
 
-fn parse_forwarded_for(
-    value: &str,
+fn parse_forwarded_for<'a, I>(
+    values: I,
     trusted_proxy_matcher: Option<&ControlApiIpAllowlistMatcher>,
-) -> Option<IpAddr> {
-    let chain = value
-        .split(',')
-        .map(|element| {
-            element.split(';').find_map(|parameter| {
+) -> Result<IpAddr, SourceIpExtractionError>
+where
+    I: IntoIterator<Item = Result<&'a str, SourceIpExtractionError>>,
+{
+    let mut chain = Vec::new();
+    for value in values {
+        for element in value?.split(',') {
+            chain.push(element.split(';').find_map(|parameter| {
                 let (name, value) = parameter.trim().split_once('=')?;
                 name.trim()
                     .eq_ignore_ascii_case("for")
                     .then(|| parse_proxy_ip(value.trim()))?
-            })
-        })
-        .collect::<Option<Vec<_>>>()?;
+            }));
+        }
+    }
+    let chain = chain
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or(SourceIpExtractionError::MalformedForwardingHeaders)?;
     chain
         .into_iter()
         .rev()
         .find(|ip| !trusted_proxy_matcher.is_some_and(|matcher| matcher.contains(*ip)))
+        .ok_or(SourceIpExtractionError::MalformedForwardingHeaders)
 }
 
-fn parse_x_forwarded_for(
-    value: &str,
+fn parse_x_forwarded_for<'a, I>(
+    values: I,
     trusted_proxy_matcher: Option<&ControlApiIpAllowlistMatcher>,
-) -> Option<IpAddr> {
-    let chain = value
-        .split(',')
-        .map(|value| parse_proxy_ip(value.trim()))
-        .collect::<Option<Vec<_>>>()?;
+) -> Result<IpAddr, SourceIpExtractionError>
+where
+    I: IntoIterator<Item = Result<&'a str, SourceIpExtractionError>>,
+{
+    let mut chain = Vec::new();
+    for value in values {
+        for value in value?.split(',') {
+            chain.push(parse_proxy_ip(value.trim()));
+        }
+    }
+    let chain = chain
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or(SourceIpExtractionError::MalformedForwardingHeaders)?;
     chain
         .into_iter()
         .rev()
         .find(|ip| !trusted_proxy_matcher.is_some_and(|matcher| matcher.contains(*ip)))
+        .ok_or(SourceIpExtractionError::MalformedForwardingHeaders)
 }
 
 fn parse_proxy_ip(value: &str) -> Option<IpAddr> {
@@ -492,7 +536,10 @@ mod tests {
             .expect("request");
         let peer = "10.0.0.2".parse().expect("peer ip");
 
-        assert_eq!(source_ip_from_request(&request, peer, false, None), peer);
+        assert_eq!(
+            source_ip_from_request(&request, peer, false, None).unwrap(),
+            peer
+        );
     }
 
     #[test]
@@ -511,7 +558,8 @@ mod tests {
                 Some(&ControlApiIpAllowlistMatcher {
                     cidrs: vec![ControlApiIpNetwork::parse("10.0.0.0/8").unwrap()],
                 }),
-            ),
+            )
+            .unwrap(),
             "2001:db8::10".parse::<IpAddr>().expect("forwarded ip")
         );
     }
@@ -528,7 +576,7 @@ mod tests {
         };
 
         assert_eq!(
-            source_ip_from_request(&request, peer, true, Some(&trusted_proxy_matcher)),
+            source_ip_from_request(&request, peer, true, Some(&trusted_proxy_matcher)).unwrap(),
             peer
         );
     }
@@ -549,8 +597,54 @@ mod tests {
                 Some(&ControlApiIpAllowlistMatcher {
                     cidrs: vec![ControlApiIpNetwork::parse("10.0.0.0/8").unwrap()],
                 }),
-            ),
+            )
+            .unwrap(),
             "203.0.113.10".parse::<IpAddr>().expect("forwarded ip")
+        );
+    }
+
+    #[test]
+    fn source_ip_combines_repeated_x_forwarded_for_fields_in_wire_order() {
+        let request = ::http::Request::builder()
+            .header("x-forwarded-for", "203.0.113.10")
+            .header("x-forwarded-for", "203.0.113.11, 10.0.0.2")
+            .body(())
+            .expect("request");
+        let peer = "10.0.0.3".parse().expect("peer ip");
+        let trusted_proxy_matcher = ControlApiIpAllowlistMatcher {
+            cidrs: vec![ControlApiIpNetwork::parse("10.0.0.0/8").unwrap()],
+        };
+
+        assert_eq!(
+            source_ip_from_request(&request, peer, true, Some(&trusted_proxy_matcher)).unwrap(),
+            "203.0.113.11".parse::<IpAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn source_ip_rejects_mixed_and_malformed_forwarding_headers() {
+        let mixed = ::http::Request::builder()
+            .header("forwarded", "for=203.0.113.10")
+            .header("x-forwarded-for", "10.0.0.2")
+            .body(())
+            .expect("request");
+        let malformed = ::http::Request::builder()
+            .header("x-forwarded-for", "203.0.113.10")
+            .header("x-forwarded-for", "not-an-ip")
+            .body(())
+            .expect("request");
+        let peer = "10.0.0.3".parse().expect("peer ip");
+        let trusted_proxy_matcher = ControlApiIpAllowlistMatcher {
+            cidrs: vec![ControlApiIpNetwork::parse("10.0.0.0/8").unwrap()],
+        };
+
+        assert_eq!(
+            source_ip_from_request(&mixed, peer, true, Some(&trusted_proxy_matcher)),
+            Err(SourceIpExtractionError::MalformedForwardingHeaders)
+        );
+        assert_eq!(
+            source_ip_from_request(&malformed, peer, true, Some(&trusted_proxy_matcher)),
+            Err(SourceIpExtractionError::MalformedForwardingHeaders)
         );
     }
 
@@ -585,9 +679,9 @@ mod tests {
             .body(())
             .expect("request b");
         let client_a =
-            source_ip_from_request(&request_a, proxy, true, Some(&trusted_proxy_matcher));
+            source_ip_from_request(&request_a, proxy, true, Some(&trusted_proxy_matcher)).unwrap();
         let client_b =
-            source_ip_from_request(&request_b, proxy, true, Some(&trusted_proxy_matcher));
+            source_ip_from_request(&request_b, proxy, true, Some(&trusted_proxy_matcher)).unwrap();
 
         assert_ne!(client_a, client_b);
     }

@@ -5,7 +5,10 @@ use http_body_util::Full;
 use super::{
     admin_identity::{AdminIdentity, AdminRole, ControlApiRequestContext},
     audit::AdminAuditResult,
-    security::{ControlApiSecurityPolicy, ControlApiSourcePolicyDecision, source_ip_from_request},
+    security::{
+        ControlApiSecurityPolicy, ControlApiSourcePolicyDecision, SourceIpExtractionError,
+        source_ip_from_request,
+    },
     state::{ControlApiPaths, ControlApiState},
     *,
 };
@@ -364,12 +367,32 @@ impl QUICListener {
             )));
         };
 
-        let source_ip = source_ip_from_request(
+        let source_ip = match source_ip_from_request(
             req,
             request_context.peer_addr.ip(),
             security.ip_allowlist.trust_proxy_headers,
             security.ip_allowlist.trusted_proxy_matcher.as_ref(),
-        );
+        ) {
+            Ok(source_ip) => source_ip,
+            Err(SourceIpExtractionError::MalformedForwardingHeaders) => {
+                Self::emit_control_api_auth_audit_event(
+                    security,
+                    None,
+                    Some(&request_context),
+                    route,
+                    active_generation,
+                    AdminAuditResult::Denied,
+                    "malformed_forwarding_headers",
+                );
+                return Err(Box::new(Self::control_api_auth_error_response(
+                    route,
+                    StatusCode::FORBIDDEN,
+                    "forbidden",
+                    "malformed_forwarding_headers",
+                    route.minimum_role(security),
+                )));
+            }
+        };
         match security.evaluate_source_policy(source_ip) {
             ControlApiSourcePolicyDecision::Allow => Ok(()),
             ControlApiSourcePolicyDecision::Deny { reason } => {
