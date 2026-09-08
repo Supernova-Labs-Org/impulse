@@ -1665,6 +1665,12 @@ async fn control_api_auth_throttle_ignores_spoofed_forwarding_addresses() {
     let response = QUICListener::gate_control_api_request_for(&mut req, &state)
         .expect_err("transport peer should remain throttled across spoofed headers");
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    let mut valid_admin =
+        control_api_request(Method::GET, &runtime_path, Some("Bearer secret-token"));
+    attach_control_api_peer_addr(&mut valid_admin, "10.0.0.2:9443");
+    QUICListener::gate_control_api_request_for(&mut valid_admin, &state)
+        .expect("valid administrator must not be locked out by shared-peer failures");
 }
 
 #[tokio::test]

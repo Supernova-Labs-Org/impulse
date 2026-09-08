@@ -219,45 +219,59 @@ impl QUICListener {
         // request headers. Trusted forwarding headers remain relevant to the
         // source allowlist below, but allowing them to select the throttle key
         // lets one client rotate spoofed addresses to bypass brute-force
-        // protection.
+        // protection. Authenticate before applying the failure budget so a
+        // valid principal behind a shared proxy can still recover access.
         let throttle_ip = request_context
             .as_ref()
             .map(|context| context.peer_addr.ip());
-        if throttle_ip.is_some_and(|ip| service_state.auth_throttle.is_blocked(ip)) {
-            return Err(Box::new(Self::control_api_auth_error_response(
-                route,
-                StatusCode::TOO_MANY_REQUESTS,
-                "too_many_requests",
-                "authentication_throttled",
-                Some(required_role),
-            )));
-        }
 
         let decision = match Self::authenticate_control_api_request(req, &service_state.security) {
             AuthenticationOutcome::Missing => {
-                if let Some(ip) = throttle_ip {
-                    service_state.auth_throttle.record_failure(ip);
-                }
-                AuthorizationDecision::Deny {
-                    status: StatusCode::UNAUTHORIZED,
-                    error: "unauthorized",
-                    reason: "missing_authentication",
-                    required_role: Some(required_role),
-                    identity: None,
-                    route,
+                if throttle_ip.is_some_and(|ip| service_state.auth_throttle.is_blocked(ip)) {
+                    AuthorizationDecision::Deny {
+                        status: StatusCode::TOO_MANY_REQUESTS,
+                        error: "too_many_requests",
+                        reason: "authentication_throttled",
+                        required_role: Some(required_role),
+                        identity: None,
+                        route,
+                    }
+                } else {
+                    if let Some(ip) = throttle_ip {
+                        service_state.auth_throttle.record_failure(ip);
+                    }
+                    AuthorizationDecision::Deny {
+                        status: StatusCode::UNAUTHORIZED,
+                        error: "unauthorized",
+                        reason: "missing_authentication",
+                        required_role: Some(required_role),
+                        identity: None,
+                        route,
+                    }
                 }
             }
             AuthenticationOutcome::Invalid(reason) => {
-                if let Some(ip) = throttle_ip {
-                    service_state.auth_throttle.record_failure(ip);
-                }
-                AuthorizationDecision::Deny {
-                    status: StatusCode::UNAUTHORIZED,
-                    error: "unauthorized",
-                    reason,
-                    required_role: Some(required_role),
-                    identity: None,
-                    route,
+                if throttle_ip.is_some_and(|ip| service_state.auth_throttle.is_blocked(ip)) {
+                    AuthorizationDecision::Deny {
+                        status: StatusCode::TOO_MANY_REQUESTS,
+                        error: "too_many_requests",
+                        reason: "authentication_throttled",
+                        required_role: Some(required_role),
+                        identity: None,
+                        route,
+                    }
+                } else {
+                    if let Some(ip) = throttle_ip {
+                        service_state.auth_throttle.record_failure(ip);
+                    }
+                    AuthorizationDecision::Deny {
+                        status: StatusCode::UNAUTHORIZED,
+                        error: "unauthorized",
+                        reason,
+                        required_role: Some(required_role),
+                        identity: None,
+                        route,
+                    }
                 }
             }
             AuthenticationOutcome::Authenticated(identity) => {
