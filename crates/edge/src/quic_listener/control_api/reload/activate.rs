@@ -169,6 +169,20 @@ impl QUICListener {
                 Self::stale_control_api_connection_response(),
             )));
         }
+        if matches!(
+            route,
+            ControlApiRoute::RuntimeActivate | ControlApiRoute::ReloadRuntime
+        ) && plan_request.expected_generation.is_none()
+        {
+            return Err(ControlApiActivationError::Response(Box::new(
+                Self::json_response(
+                    StatusCode::BAD_REQUEST,
+                    json!({
+                        "error": "expected_generation is required for runtime mutation",
+                    }),
+                ),
+            )));
+        }
         Self::perform_control_api_runtime_activation_from_plan_request(
             plan_request,
             state,
