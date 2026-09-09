@@ -4548,3 +4548,124 @@ fn control_api_actor_ignores_caller_supplied_requested_by_for_rollback() {
         "rollback must record the authenticated actor, not the caller-supplied requested_by"
     );
 }
+
+#[test]
+fn activation_requires_expected_generation_but_reload_certs_does_not() {
+    let missing = QUICListener::missing_expected_generation_response(
+        super::admin_auth::ControlApiRoute::RuntimeActivate,
+        None,
+    );
+    assert!(
+        missing.is_some(),
+        "activation without expected_generation must be rejected"
+    );
+
+    let present = QUICListener::missing_expected_generation_response(
+        super::admin_auth::ControlApiRoute::RuntimeActivate,
+        Some(3),
+    );
+    assert!(
+        present.is_none(),
+        "activation with expected_generation present must not be rejected"
+    );
+
+    let unrelated_route = QUICListener::missing_expected_generation_response(
+        super::admin_auth::ControlApiRoute::RuntimeValidate,
+        None,
+    );
+    assert!(
+        unrelated_route.is_none(),
+        "routes other than activate/reload must not require expected_generation"
+    );
+}
+
+#[tokio::test]
+async fn activation_missing_expected_generation_returns_400() {
+    let response = QUICListener::missing_expected_generation_response(
+        super::admin_auth::ControlApiRoute::RuntimeActivate,
+        None,
+    )
+    .expect("missing expected_generation must produce a response");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = full_body_bytes(response).await;
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("error payload");
+    assert_eq!(
+        payload["error"],
+        "expected_generation is required for runtime mutation"
+    );
+}
+
+#[test]
+fn rollback_requires_expected_active_generation() {
+    let missing = QUICListener::missing_expected_active_generation_response(None);
+    assert!(
+        missing.is_some(),
+        "rollback without expected_active_generation must be rejected"
+    );
+
+    let present = QUICListener::missing_expected_active_generation_response(Some(2));
+    assert!(
+        present.is_none(),
+        "rollback with expected_active_generation present must not be rejected"
+    );
+}
+
+#[tokio::test]
+async fn rollback_missing_expected_active_generation_returns_400() {
+    let response = QUICListener::missing_expected_active_generation_response(None)
+        .expect("missing expected_active_generation must produce a response");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = full_body_bytes(response).await;
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("error payload");
+    assert_eq!(
+        payload["error"],
+        "expected_active_generation is required for runtime rollback"
+    );
+}
+
+#[test]
+fn activation_payload_rejects_misspelled_generation_field() {
+    // A caller misspelling `expected_generation` must fail deserialization
+    // outright rather than silently proceeding without a concurrency
+    // precondition.
+    let err = serde_json::from_str::<super::reload::request_body::ControlApiRuntimePlanRequest>(
+        r#"{"expected_generatoin": 5}"#,
+    )
+    .expect_err("misspelled field must be rejected");
+    assert!(err.to_string().contains("unknown field"));
+}
+
+#[test]
+fn activation_payload_rejects_rollback_only_field() {
+    // `expected_active_generation` is only meaningful on the rollback
+    // endpoint; submitting it to activate/reload must not be silently
+    // accepted and ignored.
+    let err = serde_json::from_str::<super::reload::request_body::ControlApiRuntimePlanRequest>(
+        r#"{"expected_active_generation": 5}"#,
+    )
+    .expect_err("wrong-endpoint field must be rejected");
+    assert!(err.to_string().contains("unknown field"));
+}
+
+#[test]
+fn rollback_payload_rejects_misspelled_generation_field() {
+    let err =
+        serde_json::from_str::<super::reload::request_body::ControlApiRuntimeRollbackPayload>(
+            r#"{"target_generation": 1, "expected_active_generatoin": 5}"#,
+        )
+        .expect_err("misspelled field must be rejected");
+    assert!(err.to_string().contains("unknown field"));
+}
+
+#[test]
+fn rollback_payload_rejects_activate_only_field() {
+    // `expected_generation` is only meaningful on the activate/reload
+    // endpoints; submitting it to rollback must not be silently accepted
+    // and ignored, since rollback has its own distinct precondition field.
+    let err =
+        serde_json::from_str::<super::reload::request_body::ControlApiRuntimeRollbackPayload>(
+            r#"{"target_generation": 1, "expected_generation": 5}"#,
+        )
+        .expect_err("wrong-endpoint field must be rejected");
+    assert!(err.to_string().contains("unknown field"));
+}

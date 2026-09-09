@@ -44,13 +44,10 @@ impl QUICListener {
         if !authorization_is_current {
             return Self::stale_control_api_connection_response();
         }
-        if payload.expected_active_generation.is_none() {
-            return Self::json_response(
-                StatusCode::BAD_REQUEST,
-                json!({
-                    "error": "expected_active_generation is required for runtime rollback",
-                }),
-            );
+        if let Some(response) =
+            Self::missing_expected_active_generation_response(payload.expected_active_generation)
+        {
+            return response;
         }
         let current_bundle = runtime_bundle_handle.current_view();
         if let Some(target_bundle) =
@@ -171,6 +168,25 @@ impl QUICListener {
                 rolled_back_to,
                 outcome.slug()
             );
+        }
+    }
+
+    /// Rollback requires an explicit `expected_active_generation` concurrency
+    /// precondition; a caller that omits it (or misspells it, or sends
+    /// `expected_generation` intended for the activate endpoint) must be
+    /// rejected rather than rolling back unconditionally.
+    pub(in crate::quic_listener::control_api) fn missing_expected_active_generation_response(
+        expected_active_generation: Option<u64>,
+    ) -> Option<Response<Full<Bytes>>> {
+        if expected_active_generation.is_none() {
+            Some(Self::json_response(
+                StatusCode::BAD_REQUEST,
+                json!({
+                    "error": "expected_active_generation is required for runtime rollback",
+                }),
+            ))
+        } else {
+            None
         }
     }
 }
