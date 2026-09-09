@@ -91,9 +91,7 @@ impl QUICListener {
             let runtime_bundle_handle = Arc::clone(&runtime_bundle_handle);
             let request = RollbackRequest {
                 target_generation: payload.target_generation,
-                requested_by: payload
-                    .requested_by
-                    .or_else(|| Some("control_api".to_string())),
+                requested_by: Self::control_api_actor(identity.as_ref()),
                 trigger_source: Some("control_api".to_string()),
                 reason: payload
                     .reason

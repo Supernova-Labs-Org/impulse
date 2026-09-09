@@ -1665,6 +1665,12 @@ async fn control_api_auth_throttle_ignores_spoofed_forwarding_addresses() {
     let response = QUICListener::gate_control_api_request_for(&mut req, &state)
         .expect_err("transport peer should remain throttled across spoofed headers");
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    let mut valid_admin =
+        control_api_request(Method::GET, &runtime_path, Some("Bearer secret-token"));
+    attach_control_api_peer_addr(&mut valid_admin, "10.0.0.2:9443");
+    QUICListener::gate_control_api_request_for(&mut valid_admin, &state)
+        .expect("valid administrator must not be locked out by shared-peer failures");
 }
 
 #[tokio::test]
@@ -1820,7 +1826,7 @@ fn control_api_dual_auth_identity_keeps_token_role_when_mtls_has_no_role_mapping
 }
 
 #[test]
-fn control_api_dual_auth_identity_clears_actor_id_when_principals_disagree() {
+fn control_api_dual_auth_identity_rejects_disagreeing_principals() {
     let request_context = super::admin_identity::ControlApiRequestContext {
         peer_addr: "127.0.0.1:9443".parse().expect("peer socket addr"),
         mtls_identity: Some(super::admin_identity::AdminMtlsIdentity {
@@ -1841,18 +1847,13 @@ fn control_api_dual_auth_identity_clears_actor_id_when_principals_disagree() {
     };
 
     let identity =
-        QUICListener::build_admin_identity(Some(request_context), Some(token_match), None)
-            .expect("dual auth identity");
+        QUICListener::build_admin_identity(Some(request_context), Some(token_match), None);
 
-    assert_eq!(
-        identity.roles,
-        vec![super::admin_identity::AdminRole::Viewer]
-    );
-    assert!(identity.actor_id.is_none());
+    assert!(identity.is_none());
 }
 
 #[test]
-fn control_api_dual_auth_identity_cross_checks_bearer_actor_id_against_mtls_san() {
+fn control_api_dual_auth_identity_rejects_bearer_actor_from_other_mtls_namespace() {
     let identity_source = super::security::ControlApiIdentitySourcePolicy {
         kind: "mtls_san_uri".to_string(),
         role_attribute: None,
@@ -1880,18 +1881,13 @@ fn control_api_dual_auth_identity_cross_checks_bearer_actor_id_against_mtls_san(
         Some(request_context),
         Some(token_match),
         Some(&identity_source),
-    )
-    .expect("dual auth identity");
-
-    assert_eq!(identity.actor_id.as_deref(), Some("admin.example.com"));
-    assert_eq!(
-        identity.roles,
-        vec![super::admin_identity::AdminRole::Operator]
     );
+
+    assert!(identity.is_none());
 }
 
 #[test]
-fn control_api_dual_auth_identity_clears_bearer_actor_id_when_no_mtls_principal_matches() {
+fn control_api_dual_auth_identity_rejects_when_no_mtls_principal_matches() {
     let identity_source = super::security::ControlApiIdentitySourcePolicy {
         kind: "mtls_san_uri".to_string(),
         role_attribute: None,
@@ -1919,14 +1915,9 @@ fn control_api_dual_auth_identity_clears_bearer_actor_id_when_no_mtls_principal_
         Some(request_context),
         Some(token_match),
         Some(&identity_source),
-    )
-    .expect("dual auth identity");
-
-    assert!(identity.actor_id.is_none());
-    assert_eq!(
-        identity.roles,
-        vec![super::admin_identity::AdminRole::Operator]
     );
+
+    assert!(identity.is_none());
 }
 
 #[test]
@@ -4488,5 +4479,72 @@ fn run_control_api_blocking_does_not_stall_the_async_runtime() {
         "a concurrently spawned 20ms timer must complete well before the 200ms \
          blocking closure finishes, proving the closure ran on Tokio's \
          blocking-thread pool rather than the single current-thread runtime worker"
+    );
+}
+
+fn authenticated_identity(actor_id: &str) -> super::admin_identity::AdminIdentity {
+    super::admin_identity::AdminIdentity {
+        actor_id: Some(actor_id.to_string()),
+        authn_mechanisms: vec![super::admin_identity::AdminAuthnMechanism::BearerToken],
+        roles: vec![super::admin_identity::AdminRole::Operator],
+        peer_addr: None,
+        mtls_subject: None,
+        mtls_san: Vec::new(),
+    }
+}
+
+#[test]
+fn control_api_actor_ignores_caller_supplied_requested_by_for_validate_and_preview() {
+    // An attacker-controlled JSON body attempting to attribute the change to
+    // "another-admin". The field only ever deserializes into the annotation
+    // slot; it must never reach `ActivationRequest.requested_by`.
+    let body: super::reload::request_body::ControlApiRuntimePlanRequest =
+        serde_json::from_str(r#"{"requested_by": "another-admin"}"#).expect("plan request json");
+
+    let real_identity = authenticated_identity("real-operator");
+    let activation_request = QUICListener::control_api_activation_request(
+        &body,
+        0,
+        "runtime_validate",
+        Some(&real_identity),
+    );
+
+    assert_eq!(
+        activation_request.requested_by.as_deref(),
+        Some("real-operator"),
+        "the authenticated actor must be recorded, not the caller-supplied requested_by"
+    );
+}
+
+#[test]
+fn control_api_actor_falls_back_to_generic_label_without_an_identity() {
+    let body: super::reload::request_body::ControlApiRuntimePlanRequest =
+        serde_json::from_str(r#"{"requested_by": "another-admin"}"#).expect("plan request json");
+
+    let activation_request =
+        QUICListener::control_api_activation_request(&body, 0, "runtime_validate", None);
+
+    assert_eq!(
+        activation_request.requested_by.as_deref(),
+        Some("control_api"),
+        "an unauthenticated/unknown identity must record the generic actor label, \
+         never the caller-supplied requested_by"
+    );
+}
+
+#[test]
+fn control_api_actor_ignores_caller_supplied_requested_by_for_rollback() {
+    let payload: super::reload::request_body::ControlApiRuntimeRollbackPayload =
+        serde_json::from_str(r#"{"target_generation": 1, "requested_by": "another-admin"}"#)
+            .expect("rollback payload json");
+    assert_eq!(payload.target_generation, 1);
+
+    let real_identity = authenticated_identity("real-admin");
+    let requested_by = QUICListener::control_api_actor(Some(&real_identity));
+
+    assert_eq!(
+        requested_by.as_deref(),
+        Some("real-admin"),
+        "rollback must record the authenticated actor, not the caller-supplied requested_by"
     );
 }

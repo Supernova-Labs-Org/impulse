@@ -28,7 +28,7 @@ use crate::runtime::{
 mod activate;
 mod parse;
 mod preview;
-mod request_body;
+pub(super) mod request_body;
 pub(super) mod rollback;
 
 impl QUICListener {

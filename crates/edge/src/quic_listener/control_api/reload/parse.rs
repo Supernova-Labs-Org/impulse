@@ -43,6 +43,7 @@ impl QUICListener {
             &plan_request,
             current.generation(),
             "runtime_validate",
+            identity.as_ref(),
         );
         let reload_input =
             Self::control_api_reload_config_input(&current, plan_request.config_path);
@@ -117,16 +118,14 @@ impl QUICListener {
         }
     }
 
-    pub(super) fn control_api_activation_request(
+    pub(in crate::quic_listener::control_api) fn control_api_activation_request(
         payload: &ControlApiRuntimePlanRequest,
         current_generation: u64,
         default_reason: &str,
+        identity: Option<&AdminIdentity>,
     ) -> ActivationRequest {
         ActivationRequest {
-            requested_by: payload
-                .requested_by
-                .clone()
-                .or_else(|| Some("control_api".to_string())),
+            requested_by: Self::control_api_actor(identity),
             trigger_source: Some("control_api".to_string()),
             reason: payload
                 .reason
@@ -135,6 +134,14 @@ impl QUICListener {
             expected_generation: payload.expected_generation.or(Some(current_generation)),
             requested_at_ms: crate::watchdog::time::now_millis(),
         }
+    }
+
+    pub(in crate::quic_listener::control_api) fn control_api_actor(
+        identity: Option<&AdminIdentity>,
+    ) -> Option<String> {
+        identity
+            .and_then(|identity| identity.actor_id.clone())
+            .or_else(|| Some("control_api".to_string()))
     }
 
     pub(super) fn record_control_api_plan_attempt(
