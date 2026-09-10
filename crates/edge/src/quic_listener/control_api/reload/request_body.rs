@@ -7,7 +7,8 @@ use super::*;
 
 pub(super) const MAX_CONTROL_API_JSON_BODY_BYTES: usize = 64 * 1024;
 
-#[derive(Default, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::quic_listener::control_api) struct ControlApiRuntimePlanRequest {
     pub(in crate::quic_listener::control_api) config_path: Option<String>,
     #[serde(rename = "requested_by")]
@@ -16,7 +17,8 @@ pub(in crate::quic_listener::control_api) struct ControlApiRuntimePlanRequest {
     pub(in crate::quic_listener::control_api) expected_generation: Option<u64>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::quic_listener::control_api) struct ControlApiRuntimeRollbackPayload {
     pub(in crate::quic_listener::control_api) target_generation: u64,
     #[serde(rename = "requested_by")]

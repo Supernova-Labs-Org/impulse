@@ -384,10 +384,13 @@ impl RuntimeSwapHarness {
             .reload_path
             .clone();
         let token = self.control_api_token()?;
-        self.rt.block_on(self.poll_control_api_json(
+        let expected_generation = self.current_generation()?;
+        let body = serde_json::json!({ "expected_generation": expected_generation });
+        self.rt.block_on(self.poll_control_api_json_with_body(
             Method::POST,
             path,
             token,
+            Some(body),
             expected_status,
             Duration::from_secs(5),
         ))
@@ -588,6 +591,19 @@ impl RuntimeSwapHarness {
         expected_status: StatusCode,
         timeout: Duration,
     ) -> Result<JsonValue, String> {
+        self.poll_control_api_json_with_body(method, path, token, None, expected_status, timeout)
+            .await
+    }
+
+    async fn poll_control_api_json_with_body(
+        &self,
+        method: Method,
+        path: String,
+        token: String,
+        body: Option<JsonValue>,
+        expected_status: StatusCode,
+        timeout: Duration,
+    ) -> Result<JsonValue, String> {
         let addr = SocketAddr::from(([127, 0, 0, 1], self.control_api_port));
         let deadline = Instant::now() + timeout;
         let mut last_error = String::new();
@@ -600,6 +616,7 @@ impl RuntimeSwapHarness {
                 method.clone(),
                 &path,
                 &token,
+                body.as_ref(),
             )
             .await
             {
@@ -699,6 +716,7 @@ async fn control_api_request_once(
     method: Method,
     path: &str,
     token: &str,
+    body: Option<&JsonValue>,
 ) -> Result<(StatusCode, JsonValue), String> {
     let roots = read_test_root_store(cert_path, initial_cert_pem)?;
     let tls_config = ClientConfig::builder()
@@ -723,12 +741,22 @@ async fn control_api_request_once(
         let _ = conn.await;
     });
 
-    let request = Request::builder()
+    let body_bytes = match body {
+        Some(value) => {
+            serde_json::to_vec(value).map_err(|err| format!("control api body encode: {err}"))?
+        }
+        None => Vec::new(),
+    };
+    let mut request_builder = Request::builder()
         .method(method)
         .uri(path)
         .header("host", "localhost")
-        .header("authorization", format!("Bearer {token}"))
-        .body(Empty::<Bytes>::new())
+        .header("authorization", format!("Bearer {token}"));
+    if body.is_some() {
+        request_builder = request_builder.header("content-type", "application/json");
+    }
+    let request = request_builder
+        .body(Full::new(Bytes::from(body_bytes)))
         .map_err(|err| format!("control api request build: {err}"))?;
     let response = sender
         .send_request(request)

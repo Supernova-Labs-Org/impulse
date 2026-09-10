@@ -169,6 +169,11 @@ impl QUICListener {
                 Self::stale_control_api_connection_response(),
             )));
         }
+        if let Some(response) =
+            Self::missing_expected_generation_response(route, plan_request.expected_generation)
+        {
+            return Err(ControlApiActivationError::Response(Box::new(response)));
+        }
         Self::perform_control_api_runtime_activation_from_plan_request(
             plan_request,
             state,
@@ -181,6 +186,31 @@ impl QUICListener {
             default_reason,
         )
         .await
+    }
+
+    /// Activation and legacy reload require an explicit `expected_generation`
+    /// concurrency precondition; a caller that omits it (or misspells it, or
+    /// sends a field only valid on another endpoint) must be rejected rather
+    /// than silently defaulting to whatever generation happens to be active
+    /// at execution time.
+    pub(in crate::quic_listener::control_api) fn missing_expected_generation_response(
+        route: ControlApiRoute,
+        expected_generation: Option<u64>,
+    ) -> Option<Response<Full<Bytes>>> {
+        let requires_precondition = matches!(
+            route,
+            ControlApiRoute::RuntimeActivate | ControlApiRoute::ReloadRuntime
+        );
+        if requires_precondition && expected_generation.is_none() {
+            Some(Self::json_response(
+                StatusCode::BAD_REQUEST,
+                json!({
+                    "error": "expected_generation is required for runtime mutation",
+                }),
+            ))
+        } else {
+            None
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
