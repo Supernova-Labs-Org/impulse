@@ -746,35 +746,91 @@ fn validate_observability(config: &Config) -> bool {
             return false;
         }
 
-        let paths = [
+        let control_api = &config.observability.control_api;
+        let runtime_history_path = format!("{}/history", control_api.runtime_path);
+        let runtime_history_entry_prefix = format!("{}/", runtime_history_path);
+        let runtime_routes = [
+            ("GET", control_api.health_path.clone(), "health"),
+            ("GET", control_api.ready_path.clone(), "ready"),
+            ("GET", control_api.runtime_path.clone(), "runtime"),
+            ("GET", runtime_history_path.clone(), "runtime_history"),
             (
-                "observability.control_api.health_path",
-                config.observability.control_api.health_path.as_str(),
+                "GET_DYNAMIC",
+                runtime_history_entry_prefix.clone(),
+                "runtime_history_generation",
             ),
             (
-                "observability.control_api.ready_path",
-                config.observability.control_api.ready_path.as_str(),
+                "POST",
+                control_api.reload_certs_path.clone(),
+                "reload_certs",
             ),
             (
-                "observability.control_api.runtime_path",
-                config.observability.control_api.runtime_path.as_str(),
+                "POST",
+                format!("{}/validate", control_api.runtime_path),
+                "runtime_validate",
             ),
             (
-                "observability.control_api.restart_path",
-                config.observability.control_api.restart_path.as_str(),
+                "POST",
+                format!("{}/preview", control_api.runtime_path),
+                "runtime_preview",
             ),
             (
-                "observability.control_api.reload_path",
-                config.observability.control_api.reload_path.as_str(),
+                "POST",
+                format!("{}/activate", control_api.runtime_path),
+                "runtime_activate",
             ),
             (
-                "observability.control_api.reload_certs_path",
-                config.observability.control_api.reload_certs_path.as_str(),
+                "POST",
+                format!("{}/rollback", control_api.runtime_path),
+                "runtime_rollback",
             ),
+            ("POST", control_api.reload_path.clone(), "reload"),
+            ("POST", control_api.restart_path.clone(), "restart"),
         ];
-        for (name, path) in paths {
-            if !path.starts_with('/') {
-                validation_error!("{} must start with '/'", name);
+        for (method, path, name) in &runtime_routes {
+            if path.is_empty()
+                || !path.starts_with('/')
+                || path.contains(['?', '#', '\\'])
+                || path.chars().any(char::is_control)
+                || (*method != "GET_DYNAMIC" && path != "/" && path.ends_with('/'))
+            {
+                validation_error!(
+                    "observability.control_api route '{}' has invalid {} path '{}'",
+                    name,
+                    method,
+                    path
+                );
+                return false;
+            }
+        }
+
+        let mut seen_routes = HashMap::new();
+        for (method, path, name) in &runtime_routes {
+            if *method == "GET_DYNAMIC" {
+                continue;
+            }
+            if let Some(previous) = seen_routes.insert((*method, path), *name) {
+                validation_error!(
+                    "observability.control_api routes '{}' and '{}' duplicate {} '{}'",
+                    previous,
+                    name,
+                    method,
+                    path
+                );
+                return false;
+            }
+        }
+
+        for (method, path, name) in &runtime_routes {
+            if *method == "GET"
+                && *path != runtime_history_path
+                && path.starts_with(runtime_history_entry_prefix.as_str())
+            {
+                validation_error!(
+                    "observability.control_api route '{}' conflicts with dynamic runtime history path prefix '{}'",
+                    name,
+                    runtime_history_entry_prefix
+                );
                 return false;
             }
         }

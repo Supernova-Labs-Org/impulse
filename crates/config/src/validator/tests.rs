@@ -1120,6 +1120,38 @@ fn accepts_control_api_with_required_mtls_and_no_tokens() {
 }
 
 #[test]
+fn rejects_control_api_route_collisions_including_generated_paths() {
+    let dir = tempdir().expect("tempdir");
+    let (cert, key) = write_test_certs(dir.path());
+    let mut cfg = base_config(&cert.to_string_lossy(), &key.to_string_lossy());
+    cfg.observability.control_api.enabled = true;
+    cfg.observability.control_api.auth_token = Some("strong-test-token".to_string());
+    cfg.observability.control_api.reload_path = "/admin/reload".to_string();
+
+    let cases = [
+        ("health_path", "/admin/runtime"),
+        ("reload_certs_path", "/admin/reload"),
+        ("restart_path", "/admin/reload"),
+        ("health_path", "/admin/runtime/history/1"),
+    ];
+    for (field, value) in cases {
+        let mut candidate = cfg.clone();
+        match field {
+            "health_path" => candidate.observability.control_api.health_path = value.to_string(),
+            "reload_certs_path" => {
+                candidate.observability.control_api.reload_certs_path = value.to_string()
+            }
+            "restart_path" => candidate.observability.control_api.restart_path = value.to_string(),
+            _ => unreachable!("test case field"),
+        }
+        assert!(
+            validate(&candidate).is_err(),
+            "collision should be rejected: {field}={value}"
+        );
+    }
+}
+
+#[test]
 fn rejects_control_api_with_optional_mtls_as_only_auth_mechanism() {
     let dir = tempdir().expect("tempdir");
     let (cert, key) = write_test_certs(dir.path());
