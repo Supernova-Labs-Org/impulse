@@ -50,3 +50,40 @@ impl ExternalAuthPlan {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use impulse_config::{
+        config::{ForwardedHeaderPolicy, ForwardedHeaderPolicyMode, UpstreamHostPolicyMode},
+        runtime::{RuntimeForwardedHeaderPolicy, RuntimeHostPolicy},
+    };
+
+    use super::*;
+
+    #[test]
+    fn shared_policy_preserves_adapter_forwarding_configuration() {
+        let upstream_policy = RuntimeUpstreamPolicy {
+            host: RuntimeHostPolicy(UpstreamHostPolicy {
+                mode: UpstreamHostPolicyMode::Rewrite,
+                host: Some("backend.example.com".to_string()),
+            }),
+            forwarded_headers: RuntimeForwardedHeaderPolicy(ForwardedHeaderPolicy {
+                mode: ForwardedHeaderPolicyMode::Append,
+            }),
+            ..RuntimeUpstreamPolicy::default()
+        };
+
+        let resolved = RequestPolicyService::resolve(&upstream_policy);
+
+        assert_eq!(
+            resolved.host_policy.host.as_deref(),
+            Some("backend.example.com")
+        );
+        assert_eq!(resolved.host_policy.mode, UpstreamHostPolicyMode::Rewrite);
+        assert_eq!(
+            resolved.forwarded_header_policy.mode,
+            ForwardedHeaderPolicyMode::Append
+        );
+        assert!(resolved.external_auth.is_none());
+    }
+}
