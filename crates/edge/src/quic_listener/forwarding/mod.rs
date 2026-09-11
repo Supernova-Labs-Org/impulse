@@ -2,6 +2,7 @@ mod auth;
 mod dispatch;
 mod lb_key;
 mod orchestration;
+mod orchestration_service;
 mod outcome;
 mod prepare;
 mod resolve;

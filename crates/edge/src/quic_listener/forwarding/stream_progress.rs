@@ -1,4 +1,5 @@
 use super::*;
+use super::orchestration_service::ForwardingOrchestrationService;
 use crate::runtime::connection::{
     guardrails::{
         BodyLimitKind, BodyTimeoutKind, RequestBodyGuardrailConfig, RequestBodyGuardrailDecision,
@@ -7,24 +8,6 @@ use crate::runtime::connection::{
     response::ForwardingPolicyTelemetry,
     stream::{CompletionReason, RequestBodyState, TimeoutReason},
 };
-
-fn record_forwarding_policy_metrics(metrics: &Metrics, policy: &ForwardingPolicyTelemetry) {
-    if let Some(reason) = policy.hedge.trigger_reason {
-        metrics.inc_hedge_trigger(reason);
-    }
-    if let Some(reason) = policy.hedge.outcome_reason {
-        metrics.inc_hedge_outcome(reason);
-    }
-    if policy.hedge.primary_late_ms > 0 {
-        metrics.observe_hedge_primary_late_ms(policy.hedge.primary_late_ms);
-    }
-    if let Some(reason) = policy.retry.attempt_reason {
-        metrics.inc_retry_attempt(reason);
-    }
-    if let Some(reason) = policy.retry.denial_reason {
-        metrics.inc_retry_denied(reason);
-    }
-}
 
 impl QUICListener {
     pub(in crate::quic_listener) fn push_request_chunk(
@@ -396,7 +379,10 @@ impl QUICListener {
             };
 
             if let Some(forward_result) = upstream_ready {
-                record_forwarding_policy_metrics(metrics, &forward_result.policy);
+                ForwardingOrchestrationService::record_policy_metrics(
+                    metrics,
+                    &forward_result.policy,
+                );
 
                 if let Some(req) = streams.get_mut(&stream_id) {
                     req.clear_upstream_result_rx();
