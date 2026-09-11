@@ -13,6 +13,8 @@ use impulse_bridge::request::{
     RequestTraceContext, build_h1_request, build_h2_request_for_target,
 };
 use impulse_config::backend_endpoint::{BackendEndpoint, BackendScheme};
+#[cfg(test)]
+use impulse_config::runtime::RuntimeUpstreamPolicy;
 use impulse_errors::{BridgeError, ProxyError};
 use impulse_lb::upstream_pool::UpstreamPool;
 use log::warn;
@@ -279,7 +281,10 @@ fn bootstrap_pending_forward(
         span_id: None,
         traceparent: traceparent.map(Arc::<str>::from),
         host_policy: prepared_route.request_policy.host_policy.clone(),
-        forwarded_header_policy: prepared_route.request_policy.forwarded_header_policy.clone(),
+        forwarded_header_policy: prepared_route
+            .request_policy
+            .forwarded_header_policy
+            .clone(),
         auth_header_mutations: Vec::new(),
     })
 }
@@ -757,7 +762,9 @@ mod tests {
     use quiche::h3::NameValue;
 
     use super::*;
-    use crate::runtime::connection::request::PendingForward;
+    use crate::{
+        request_pipeline::RequestPolicyService, runtime::connection::request::PendingForward,
+    };
 
     #[test]
     fn terminal_outcome_accepted_classification() {
@@ -898,6 +905,7 @@ mod tests {
     fn bootstrap_and_quic_request_builders_emit_same_standard_request_shape() {
         let endpoint = BackendEndpoint::parse("backend.internal:443").expect("endpoint");
         let policy = sample_bootstrap_policy();
+        let request_policy = RequestPolicyService::resolve(&policy);
         let logical_headers = vec![
             quiche::h3::Header::new(b"forwarded", b"for=1.2.3.4;proto=http;host=\"old.example\""),
             quiche::h3::Header::new(b"x-forwarded-for", b"1.2.3.4"),
@@ -965,7 +973,7 @@ mod tests {
             client_upgrade: None,
         };
         let bootstrap_request = build_h2_request_for_target(
-            bootstrap_request_build_target(&endpoint, &policy),
+            bootstrap_request_build_target(&endpoint, &request_policy),
             RequestBuildInput {
                 method: &intake.method,
                 path: &intake.path,
@@ -999,6 +1007,7 @@ mod tests {
     fn bootstrap_target_uses_same_forwarded_and_auth_header_contract_as_quic() {
         let endpoint = BackendEndpoint::parse("backend.internal:443").expect("endpoint");
         let policy = sample_bootstrap_policy();
+        let request_policy = RequestPolicyService::resolve(&policy);
         let mut bootstrap_headers = HeaderMap::new();
         bootstrap_headers.insert(
             http::header::AUTHORIZATION,
@@ -1012,7 +1021,7 @@ mod tests {
 
         let bridge_headers = bootstrap_bridge_headers(&bootstrap_headers);
         let request = build_h2_request_for_target(
-            bootstrap_request_build_target(&endpoint, &policy),
+            bootstrap_request_build_target(&endpoint, &request_policy),
             RequestBuildInput {
                 method: "GET",
                 path: "/v1/chat",
