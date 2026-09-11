@@ -16,7 +16,7 @@ use impulse_config::config::{
     ControlApi as ControlApiConfig, ControlApiAuditFormat, ControlApiAuditSink,
 };
 use impulse_utils::logger::CONTROL_API_AUDIT_LOG_TARGET;
-use log::{error, info, warn};
+use log::{Level, Metadata, Record, error, warn};
 use serde::Serialize;
 
 use super::{
@@ -737,6 +737,27 @@ impl QUICListener {
 }
 
 impl ControlApiAdminAuditEmitter {
+    fn emit_log_audit(&self, serialized: &str) {
+        let metadata = Metadata::builder()
+            .level(Level::Info)
+            .target(CONTROL_API_AUDIT_LOG_TARGET)
+            .build();
+        if !log::logger().enabled(&metadata) {
+            self.metrics.inc_control_api_audit_event_drop();
+            eprintln!(
+                "dropping control API admin audit event because the audit logger is unavailable"
+            );
+            return;
+        }
+
+        // Call the configured logger directly instead of using info!, whose
+        // macro-level guard consults log::max_level. Application log levels
+        // must not disable the independent audit delivery channel.
+        let args = format_args!("{}", serialized);
+        let record = Record::builder().metadata(metadata).args(args).build();
+        log::logger().log(&record);
+    }
+
     fn emit(&self, event: &AdminAuditEvent) {
         let serialized = match self.format {
             ControlApiAuditFormat::Json => match serde_json::to_string(event) {
@@ -750,9 +771,7 @@ impl ControlApiAdminAuditEmitter {
         };
 
         match &self.sink {
-            ControlApiAdminAuditTarget::Log => {
-                info!(target: CONTROL_API_AUDIT_LOG_TARGET, "{}", serialized)
-            }
+            ControlApiAdminAuditTarget::Log => self.emit_log_audit(&serialized),
             ControlApiAdminAuditTarget::File(Some(_)) => match &self.delivery {
                 ControlApiAdminAuditDelivery::BufferedFile(writer) => writer.emit(serialized),
                 ControlApiAdminAuditDelivery::UnavailableFile { path, reason } => {
@@ -773,7 +792,7 @@ impl ControlApiAdminAuditEmitter {
                 warn!(
                     "control API admin audit sink configured as file without file_path; falling back to log"
                 );
-                info!(target: CONTROL_API_AUDIT_LOG_TARGET, "{}", serialized);
+                self.emit_log_audit(&serialized);
             }
         }
     }

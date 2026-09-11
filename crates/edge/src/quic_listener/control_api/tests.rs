@@ -4667,3 +4667,65 @@ fn rollback_payload_rejects_activate_only_field() {
         .expect_err("wrong-endpoint field must be rejected");
     assert!(err.to_string().contains("unknown field"));
 }
+
+#[test]
+fn log_audit_sink_delivers_events_regardless_of_the_application_log_threshold() {
+    // A real logger backend writing to a file, so the test can assert on
+    // what actually got emitted rather than only on drop counters — an
+    // `info!`-gated audit call that application `log.level` suppresses is
+    // never dropped (it's never attempted), so a drop-counter-only
+    // assertion cannot detect this regression.
+    let dir = tempdir().expect("tempdir");
+    let log_path = dir.path().join("app.log");
+    let init_status = impulse_utils::logger::try_init_logger(
+        "info",
+        true,
+        log_path.to_str().expect("log path utf8"),
+        false,
+    );
+    // `try_init_logger` installs the process-global logger exactly once; if
+    // another test already installed it (writing elsewhere, e.g. stderr),
+    // this test can't observe file output and would either false-pass or
+    // false-fail depending on suite ordering. Skip rather than assert.
+    if init_status == impulse_utils::logger::LoggerInitStatus::AlreadyInitialized {
+        eprintln!(
+            "skipping log_audit_sink_delivers_events_regardless_of_the_application_log_threshold: \
+             logger already installed by an earlier test"
+        );
+        return;
+    }
+
+    let (cert, key) = write_test_cert_for_name(dir.path(), "server", "api.example.com");
+    let mut config = test_config(cert, key);
+    config.observability.control_api.enabled = true;
+    config.observability.control_api.audit.enabled = true;
+    config.observability.control_api.audit.sink = ControlApiAuditSink::Log;
+    let state = control_api_state_with_runtime_bundle(&config, &config);
+
+    for level in ["off", "error", "warn", "info", "debug", "trace"] {
+        impulse_utils::logger::set_log_level(level).expect("set application log level");
+        let marker = format!("log-threshold-marker-{level}");
+
+        QUICListener::emit_control_api_audit_event(
+            &state.current_security_policy(),
+            None,
+            None,
+            super::audit::AdminAuditEventType::RuntimeSnapshot,
+            super::audit::AdminAuditAction::RuntimeSnapshotRead,
+            QUICListener::control_api_audit_target_for_route(
+                super::admin_auth::ControlApiRoute::Runtime,
+                None,
+            ),
+            super::audit::AdminAuditGeneration::default(),
+            super::audit::AdminAuditResult::Success,
+            Some(marker.clone()),
+        );
+
+        let contents = std::fs::read_to_string(&log_path).expect("read log file");
+        assert!(
+            contents.contains(&marker),
+            "audit event must reach the log sink at application log level '{level}', \
+             log file contents: {contents}"
+        );
+    }
+}
