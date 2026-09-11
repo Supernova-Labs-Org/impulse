@@ -2,7 +2,6 @@ mod support;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use impulse_lb::upstream_pool::UpstreamPool;
-
 use support::{BACKEND_COUNTS, STRATEGIES, runtime_upstream, upstream_pool};
 
 const KEYS: [&str; 8] = [

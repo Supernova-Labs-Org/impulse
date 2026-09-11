@@ -2,7 +2,6 @@ mod support;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use impulse_edge::routing::{index::RouteIndex, scan::scan_lookup};
-
 use support::{ROUTE_SCALES, RouteIndexFixture};
 
 fn benchmark_construction(criterion: &mut Criterion) {

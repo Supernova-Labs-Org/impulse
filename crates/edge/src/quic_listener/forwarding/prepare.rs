@@ -21,8 +21,7 @@ use crate::{
     runtime::connection::{
         auth::{
             ExternalAuthCompletion, ExternalAuthFailureDisposition, ExternalAuthResult,
-            PendingHeaderMutation, apply_auth_request_mutations,
-            evaluate_external_auth_completion,
+            PendingHeaderMutation, apply_auth_request_mutations, evaluate_external_auth_completion,
         },
         outcome::{
             AdmissionOutcomeClass, BackendOutcomeTarget, RouteOutcomeTarget,
@@ -698,16 +697,16 @@ impl QUICListener {
                 );
 
                 Some(match resolved_policy.external_auth {
-                    Some(external_auth) => {
-                        PreAdmissionNextState::RequiresExternalAuth(Box::new(
-                            ExternalAuthCandidate {
-                                request: dispatch_ready,
-                                external_auth: external_auth.policy,
-                                auth_disposition: external_auth.disposition,
-                            },
-                        ))
+                    Some(external_auth) => PreAdmissionNextState::RequiresExternalAuth(Box::new(
+                        ExternalAuthCandidate {
+                            request: dispatch_ready,
+                            external_auth: external_auth.policy,
+                            auth_disposition: external_auth.disposition,
+                        },
+                    )),
+                    None => {
+                        PreAdmissionNextState::ReadyForPostAuthAdmission(Box::new(dispatch_ready))
                     }
-                    None => PreAdmissionNextState::ReadyForPostAuthAdmission(Box::new(dispatch_ready)),
                 })
             }
             Err(err) => {

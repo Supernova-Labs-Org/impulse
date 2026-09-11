@@ -1278,8 +1278,10 @@ mod tests {
     use std::sync::Arc;
 
     use boring::{pkey::PKey, x509::X509};
-    use impulse_config::config::ControlApiClientAuthMode;
-    use impulse_config::{config::ClientAuth, runtime::RuntimeTlsIdentity};
+    use impulse_config::{
+        config::{ClientAuth, ControlApiClientAuthMode},
+        runtime::RuntimeTlsIdentity,
+    };
     use rcgen::{Certificate, CertificateParams, SanType};
     use rustls::RootCertStore;
     use tempfile::tempdir;

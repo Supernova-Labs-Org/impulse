@@ -1,11 +1,10 @@
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::{
     fs::{File, OpenOptions},
     io::{self, Read},
     path::Path,
 };
-
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
 
 #[derive(Debug)]
 pub(crate) enum BoundedFileReadError {
@@ -77,15 +76,14 @@ fn open_regular_file(path: &Path) -> io::Result<File> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
     use std::{
         fs,
         io::{self, Read},
     };
 
     use tempfile::tempdir;
-
-    #[cfg(unix)]
-    use std::{ffi::CString, os::unix::ffi::OsStrExt};
 
     use super::{BoundedFileReadError, read_file_with_limit, read_with_limit};
 

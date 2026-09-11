@@ -87,13 +87,13 @@ impl QUICListener {
             route_queue_permit,
         ) = match crate::quic_listener::admission::RequestAdmissionService::new(resilience)
             .execute_post_auth(
-            pending_forward.as_ref(),
-            req.upstream_pool.as_ref(),
-            req.backend_index,
-            exec_ctx.upstream_inflight,
-            Arc::clone(&exec_ctx.global_inflight),
-            exec_ctx.inflight_acquire_wait,
-        ) {
+                pending_forward.as_ref(),
+                req.upstream_pool.as_ref(),
+                req.backend_index,
+                exec_ctx.upstream_inflight,
+                Arc::clone(&exec_ctx.global_inflight),
+                exec_ctx.inflight_acquire_wait,
+            ) {
             crate::quic_listener::admission::PostAuthAdmissionExecution::Rejected(
                 crate::quic_listener::admission::PostAuthAdmissionRejection::Quota(decision),
             ) => {

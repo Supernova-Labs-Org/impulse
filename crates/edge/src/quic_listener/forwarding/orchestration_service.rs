@@ -2,13 +2,13 @@ use impulse_errors::{ClassifiedUpstreamProxyError, PoolError, ProxyError};
 use log::error;
 
 use crate::{
+    Metrics,
     runtime::connection::{
         outcome::{BackendOutcomeTarget, RouteOutcomeTarget},
         request::RequestEnvelope,
         response::ForwardingPolicyTelemetry,
         stream::{BackendFailureReason, RejectionReason, StreamPhase, TerminalReason},
     },
-    Metrics,
 };
 
 /// Common forwarding outcome and telemetry orchestration independent of the

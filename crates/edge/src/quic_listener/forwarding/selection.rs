@@ -5,17 +5,14 @@ use impulse_errors::{
     RetryPolicyDecision, RetryPolicyFacts, classify_retryability, evaluate_hedge_policy,
     evaluate_retry_policy,
 };
-use impulse_lb::{
-    alternate_backend::AlternateBackendFailureReason,
-    upstream_pool::UpstreamPool,
-};
+use impulse_lb::{alternate_backend::AlternateBackendFailureReason, upstream_pool::UpstreamPool};
 use log::error;
 
 use super::{
+    super::QUICListener,
     lb_key::ResolvedLbKey,
     resolve::{BackendSelection, TargetResolutionRequest},
 };
-use super::super::QUICListener;
 use crate::resilience::{
     circuit_breaker::{CircuitBreakerPermit, CircuitBreakers},
     retry_budget::RetryBudget,
@@ -70,9 +67,9 @@ impl ForwardingSelectionService {
         circuit_breakers: &'a CircuitBreakers,
         backend: &str,
     ) -> Result<CircuitBreakerPermit<'a>, ProxyError> {
-        circuit_breakers.allow_request(backend).ok_or_else(|| {
-            ProxyError::Pool(PoolError::CircuitOpen(backend.to_string()))
-        })
+        circuit_breakers
+            .allow_request(backend)
+            .ok_or_else(|| ProxyError::Pool(PoolError::CircuitOpen(backend.to_string())))
     }
 
     pub(super) fn retry_budget_available(

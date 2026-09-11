@@ -10,8 +10,7 @@ use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use impulse_config::runtime::RuntimeExternalAuth;
 use serde_json::Value;
-use tokio::sync::Mutex;
-use tokio::task::AbortHandle;
+use tokio::{sync::Mutex, task::AbortHandle};
 
 use super::*;
 use crate::runtime::connection::{
