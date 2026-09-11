@@ -1,7 +1,6 @@
 use std::{borrow::Cow, collections::VecDeque, convert::Infallible};
 
 use http_body_util::Full;
-use impulse_config::runtime::RuntimeExternalAuth;
 use smallvec::SmallVec;
 use tokio::{sync::oneshot, task::AbortHandle};
 
@@ -14,6 +13,7 @@ use super::{
     *,
 };
 use crate::{
+    request_pipeline::RequestPolicyService,
     quic_listener::admission::{
         AdmissionPolicyDecision, AdmissionRejectionResponse, admission_rejection_response,
         evaluate_forwarding_pre_admission_policy,
@@ -21,7 +21,7 @@ use crate::{
     runtime::connection::{
         auth::{
             ExternalAuthCompletion, ExternalAuthFailureDisposition, ExternalAuthResult,
-            ExternalAuthTaskConfig, PendingHeaderMutation, apply_auth_request_mutations,
+            PendingHeaderMutation, apply_auth_request_mutations,
             evaluate_external_auth_completion,
         },
         outcome::{
@@ -504,6 +504,7 @@ impl QUICListener {
                 backend_index,
                 backend_lb,
             }) => {
+                let resolved_policy = RequestPolicyService::resolve(&upstream_policy);
                 let routing = RoutingSnapshot {
                     backend_addr: backend_addr.clone(),
                     backend_index,
@@ -514,7 +515,7 @@ impl QUICListener {
                     backend_lb: Some(backend_lb.clone()),
                 };
                 let admission = evaluate_forwarding_pre_admission_policy(
-                    &upstream_policy,
+                    &resolved_policy.local_auth_policy,
                     Some(&lb_header_lookup),
                     &resilience.brownout,
                     resilience.adaptive_admission.inflight_percent(),
@@ -652,10 +653,6 @@ impl QUICListener {
                     }
                 }
 
-                let external_auth = upstream_policy.upstream_auth.external_auth.clone();
-                let auth_disposition = external_auth
-                    .as_ref()
-                    .map(|auth| ExternalAuthTaskConfig::from_external_auth(auth).disposition);
                 let request_id = intake.request_id();
                 let pending_forward = Arc::new(PendingForward {
                     method: Arc::<str>::from(method),
@@ -689,8 +686,8 @@ impl QUICListener {
                         .traceparent
                         .as_deref()
                         .map(Arc::<str>::from),
-                    host_policy: upstream_policy.host.0.clone(),
-                    forwarded_header_policy: upstream_policy.forwarded_headers.0.clone(),
+                    host_policy: resolved_policy.host_policy,
+                    forwarded_header_policy: resolved_policy.forwarded_header_policy,
                     auth_header_mutations: Vec::new(),
                 });
                 let dispatch_ready = Self::build_dispatch_ready_candidate(
@@ -700,17 +697,17 @@ impl QUICListener {
                     pending_forward,
                 );
 
-                Some(match (external_auth, auth_disposition) {
-                    (Some(external_auth), Some(auth_disposition)) => {
+                Some(match resolved_policy.external_auth {
+                    Some(external_auth) => {
                         PreAdmissionNextState::RequiresExternalAuth(Box::new(
                             ExternalAuthCandidate {
                                 request: dispatch_ready,
-                                external_auth,
-                                auth_disposition,
+                                external_auth: external_auth.policy,
+                                auth_disposition: external_auth.disposition,
                             },
                         ))
                     }
-                    _ => PreAdmissionNextState::ReadyForPostAuthAdmission(Box::new(dispatch_ready)),
+                    None => PreAdmissionNextState::ReadyForPostAuthAdmission(Box::new(dispatch_ready)),
                 })
             }
             Err(err) => {
