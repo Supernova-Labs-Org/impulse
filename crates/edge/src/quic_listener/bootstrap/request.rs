@@ -24,8 +24,7 @@ use super::{
     super::{
         QUICListener,
         admission::{
-            AdmissionPolicyDecision, admission_rejection_response,
-            evaluate_forwarding_pre_admission_policy,
+            AdmissionPolicyDecision, RequestAdmissionService, admission_rejection_response,
         },
         forwarding::{
             BootstrapTargetResolutionInput, ResolutionContext, ResolutionObservation,
@@ -480,27 +479,15 @@ pub(in crate::quic_listener) fn evaluate_bootstrap_request_policy(
         }
     };
 
-    let admission = evaluate_forwarding_pre_admission_policy(
+    let admission = RequestAdmissionService::new(&input.request_ctx.runtime.resilience)
+        .evaluate_pre_auth(
         &resolved.upstream_policy,
         Some(&lb_header_lookup),
-        &input.request_ctx.runtime.resilience.brownout,
-        input
-            .request_ctx
-            .runtime
-            .resilience
-            .adaptive_admission
-            .inflight_percent(),
         &resolved.upstream_name,
         input.intake.method.as_ref(),
         &input.intake.path,
         input.intake.authority.as_deref(),
         input.request_ctx.peer,
-        input
-            .request_ctx
-            .runtime
-            .resilience
-            .shed_retry_after_seconds,
-        &input.request_ctx.runtime.resilience.scoped_rate_limits,
     );
     input
         .request_ctx

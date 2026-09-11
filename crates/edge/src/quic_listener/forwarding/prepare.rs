@@ -15,8 +15,8 @@ use super::{
 use crate::{
     request_pipeline::RequestPolicyService,
     quic_listener::admission::{
-        AdmissionPolicyDecision, AdmissionRejectionResponse, admission_rejection_response,
-        evaluate_forwarding_pre_admission_policy,
+        AdmissionPolicyDecision, AdmissionRejectionResponse, RequestAdmissionService,
+        admission_rejection_response,
     },
     runtime::connection::{
         auth::{
@@ -514,18 +514,14 @@ impl QUICListener {
                     route_host_specific,
                     backend_lb: Some(backend_lb.clone()),
                 };
-                let admission = evaluate_forwarding_pre_admission_policy(
+                let admission = RequestAdmissionService::new(resilience).evaluate_pre_auth(
                     &resolved_policy.local_auth_policy,
                     Some(&lb_header_lookup),
-                    &resilience.brownout,
-                    resilience.adaptive_admission.inflight_percent(),
                     &upstream_name,
                     method,
                     path,
                     authority,
                     peer_address,
-                    resilience.shed_retry_after_seconds,
-                    &resilience.scoped_rate_limits,
                 );
                 metrics.set_brownout_active(resilience.brownout.is_active());
                 let rejection_response = admission_rejection_response(&admission);
