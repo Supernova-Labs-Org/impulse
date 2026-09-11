@@ -14,8 +14,6 @@ use super::{
     RuntimeResilience, evaluate_forwarding_pre_admission_policy,
     execute_forwarding_post_auth_admission,
 };
-#[cfg(test)]
-use super::ScopedRateLimiters;
 
 /// Protocol-neutral admission boundary for an already resolved request.
 ///
@@ -75,10 +73,5 @@ impl<'a> RequestAdmissionService<'a> {
             global_inflight,
             inflight_acquire_wait,
         )
-    }
-
-    #[cfg(test)]
-    pub(super) fn scoped_rate_limits(self) -> &'a ScopedRateLimiters {
-        &self.resilience.scoped_rate_limits
     }
 }

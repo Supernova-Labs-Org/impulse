@@ -12,10 +12,7 @@ use impulse_bridge::request::{
     RequestBuildInput, RequestBuildPolicies, RequestBuildTarget, RequestForwardedContext,
     RequestTraceContext, build_h1_request, build_h2_request_for_target,
 };
-use impulse_config::{
-    backend_endpoint::{BackendEndpoint, BackendScheme},
-    runtime::RuntimeUpstreamPolicy,
-};
+use impulse_config::backend_endpoint::{BackendEndpoint, BackendScheme};
 use impulse_errors::{BridgeError, ProxyError};
 use impulse_lb::upstream_pool::UpstreamPool;
 use log::warn;
@@ -35,13 +32,16 @@ use super::{
     outcome::{observe_bootstrap_admission_outcome, observe_bootstrap_request_proxy_error},
     response::{BootstrapStreamingBody, boxed_full},
 };
-use crate::runtime::connection::{
-    auth::{
-        ExternalAuthDecision, ExternalAuthStateTransition, PendingHeaderMutation,
-        apply_auth_request_mutations,
+use crate::{
+    request_pipeline::ResolvedRequestPolicy,
+    runtime::connection::{
+        auth::{
+            ExternalAuthDecision, ExternalAuthStateTransition, PendingHeaderMutation,
+            apply_auth_request_mutations,
+        },
+        outcome::AdmissionOutcomeClass,
+        request::PendingForward,
     },
-    outcome::AdmissionOutcomeClass,
-    request::PendingForward,
 };
 
 /// The bootstrap request lifecycle stages, mirroring the QUIC data path so the
@@ -226,7 +226,7 @@ pub(in crate::quic_listener) struct BootstrapPreparedRoute {
     pub(in crate::quic_listener) backend_addr: String,
     pub(in crate::quic_listener) backend_index: usize,
     pub(in crate::quic_listener) upstream_name: String,
-    pub(in crate::quic_listener) upstream_policy: RuntimeUpstreamPolicy,
+    pub(in crate::quic_listener) request_policy: ResolvedRequestPolicy,
     pub(in crate::quic_listener) upstream_pool: Arc<RwLock<UpstreamPool>>,
 }
 
@@ -278,8 +278,8 @@ fn bootstrap_pending_forward(
         trace_id: None,
         span_id: None,
         traceparent: traceparent.map(Arc::<str>::from),
-        host_policy: prepared_route.upstream_policy.host.0.clone(),
-        forwarded_header_policy: prepared_route.upstream_policy.forwarded_headers.0.clone(),
+        host_policy: prepared_route.request_policy.host_policy.clone(),
+        forwarded_header_policy: prepared_route.request_policy.forwarded_header_policy.clone(),
         auth_header_mutations: Vec::new(),
     })
 }
@@ -334,10 +334,10 @@ pub(in crate::quic_listener) async fn evaluate_bootstrap_external_auth(
     traceparent: Option<&str>,
 ) -> BootstrapTerminalResult<Vec<PendingHeaderMutation>> {
     let Some(external_auth) = prepared_route
-        .upstream_policy
-        .upstream_auth
+        .request_policy
         .external_auth
-        .clone()
+        .as_ref()
+        .map(|plan| plan.policy.clone())
     else {
         return Ok(Vec::new());
     };
@@ -388,13 +388,13 @@ pub(in crate::quic_listener) async fn evaluate_bootstrap_external_auth(
 
 fn bootstrap_request_build_target<'a>(
     endpoint: &'a BackendEndpoint,
-    upstream_policy: &'a RuntimeUpstreamPolicy,
+    request_policy: &'a ResolvedRequestPolicy,
 ) -> RequestBuildTarget<'a> {
     RequestBuildTarget {
         endpoint,
         policies: RequestBuildPolicies {
-            host_policy: &upstream_policy.host.0,
-            forwarded_header_policy: &upstream_policy.forwarded_headers.0,
+            host_policy: &request_policy.host_policy,
+            forwarded_header_policy: &request_policy.forwarded_header_policy,
         },
     }
 }
@@ -479,18 +479,17 @@ pub(in crate::quic_listener) fn evaluate_bootstrap_request_policy(
     };
 
     let pipeline = ForwardingRequestPipeline::new(&input.request_ctx.runtime.resilience);
-    let admission = pipeline
-        .evaluate(
-            PipelineRoute::new(&resolved.upstream_name, &resolved.upstream_policy),
-            PipelineRequest {
-                method: input.intake.method.as_ref(),
-                path: &input.intake.path,
-                authority: input.intake.authority.as_deref(),
-                peer_address: input.request_ctx.peer,
-                header_lookup: Some(&lb_header_lookup),
-            },
-        )
-        .admission;
+    let pipeline_evaluation = pipeline.evaluate(
+        PipelineRoute::new(&resolved.upstream_name, &resolved.upstream_policy),
+        PipelineRequest {
+            method: input.intake.method.as_ref(),
+            path: &input.intake.path,
+            authority: input.intake.authority.as_deref(),
+            peer_address: input.request_ctx.peer,
+            header_lookup: Some(&lb_header_lookup),
+        },
+    );
+    let admission = pipeline_evaluation.admission;
     input
         .request_ctx
         .runtime
@@ -685,7 +684,7 @@ pub(in crate::quic_listener) fn evaluate_bootstrap_request_policy(
         backend_addr: resolved.backend_addr,
         backend_index: resolved.backend_index,
         upstream_name: resolved.upstream_name,
-        upstream_policy: resolved.upstream_policy,
+        request_policy: pipeline_evaluation.policy,
         upstream_pool: resolved.upstream_pool,
     })
 }
@@ -697,7 +696,7 @@ pub(in crate::quic_listener) fn build_bootstrap_upstream_request(
     apply_auth_request_mutations(&mut bridge_headers, &input.request_header_mutations);
     let request_target = bootstrap_request_build_target(
         &input.prepared_route.endpoint,
-        &input.prepared_route.upstream_policy,
+        &input.prepared_route.request_policy,
     );
 
     if input.intake.request_mode.is_websocket_upgrade() {

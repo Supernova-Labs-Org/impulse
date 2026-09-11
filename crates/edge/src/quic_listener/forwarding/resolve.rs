@@ -228,7 +228,7 @@ impl QUICListener {
             observation,
         } = input;
         let TargetResolution { route, backend } =
-            match Self::resolve_backend_without_inflight_request(&request, &context) {
+            match Self::resolve_backend_internal(&request, &context, false) {
                 Ok(resolved) => resolved,
                 Err(err) => {
                     Self::observe_route_resolution_failure(
@@ -380,13 +380,6 @@ impl QUICListener {
             &route.route_reason,
         );
         Ok(TargetResolution { route, backend })
-    }
-
-    fn resolve_backend_without_inflight_request(
-        request: &TargetResolutionRequest<'_>,
-        context: &ResolutionContext<'_>,
-    ) -> Result<TargetResolution, ProxyError> {
-        Self::resolve_backend_internal(request, context, false)
     }
 
     #[cfg(test)]
