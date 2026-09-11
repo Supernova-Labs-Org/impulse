@@ -4,6 +4,7 @@ mod lb_key;
 mod orchestration;
 mod orchestration_service;
 mod outcome;
+mod pipeline;
 mod prepare;
 mod resolve;
 mod response;

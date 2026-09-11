@@ -6,6 +6,7 @@ use tokio::{sync::oneshot, task::AbortHandle};
 
 use super::{
     auth::start_external_auth_task,
+    pipeline::{ForwardingRequestPipeline, PipelineRequest, PipelineResolution},
     resolve::{
         ForwardTargetResolution, ForwardTargetResolutionInput, ResolutionContext,
         ResolutionObservation, TargetResolutionRequest,
@@ -13,10 +14,8 @@ use super::{
     *,
 };
 use crate::{
-    request_pipeline::RequestPolicyService,
     quic_listener::admission::{
-        AdmissionPolicyDecision, AdmissionRejectionResponse, RequestAdmissionService,
-        admission_rejection_response,
+        AdmissionPolicyDecision, AdmissionRejectionResponse, admission_rejection_response,
     },
     runtime::connection::{
         auth::{
@@ -480,31 +479,44 @@ impl QUICListener {
                 .and_then(|header| std::str::from_utf8(header.value()).ok())
                 .map(str::to_string)
         };
-        let resolved = Self::resolve_forwarding_target(ForwardTargetResolutionInput {
-            request: TargetResolutionRequest::new(
+        let resolved = ForwardingRequestPipeline::new(resilience).resolve(
+            Self::resolve_forwarding_target(ForwardTargetResolutionInput {
+                request: TargetResolutionRequest::new(
+                    method,
+                    path,
+                    authority,
+                    Some(sticky_cid_key),
+                    Some(&lb_header_lookup),
+                ),
+                context: resolution_context,
+                observation: ResolutionObservation::new(metrics, request_start.elapsed()),
+            }),
+            PipelineRequest {
                 method,
                 path,
                 authority,
-                Some(sticky_cid_key),
-                Some(&lb_header_lookup),
-            ),
-            context: resolution_context,
-            observation: ResolutionObservation::new(metrics, request_start.elapsed()),
-        });
+                peer_address,
+                header_lookup: Some(&lb_header_lookup),
+            },
+        );
 
         let prepared = match resolved {
-            Ok(ForwardTargetResolution {
-                upstream_name,
-                upstream_pool,
-                upstream_policy,
-                route_path_len,
-                route_host_specific,
-                route_reason,
-                backend_addr,
-                backend_index,
-                backend_lb,
+            Ok(PipelineResolution {
+                target:
+                    ForwardTargetResolution {
+                        upstream_name,
+                        upstream_pool,
+                        upstream_policy: _,
+                        route_path_len,
+                        route_host_specific,
+                        route_reason,
+                        backend_addr,
+                        backend_index,
+                        backend_lb,
+                    },
+                policy: resolved_policy,
+                admission,
             }) => {
-                let resolved_policy = RequestPolicyService::resolve(&upstream_policy);
                 let routing = RoutingSnapshot {
                     backend_addr: backend_addr.clone(),
                     backend_index,
@@ -514,15 +526,6 @@ impl QUICListener {
                     route_host_specific,
                     backend_lb: Some(backend_lb.clone()),
                 };
-                let admission = RequestAdmissionService::new(resilience).evaluate_pre_auth(
-                    &resolved_policy.local_auth_policy,
-                    Some(&lb_header_lookup),
-                    &upstream_name,
-                    method,
-                    path,
-                    authority,
-                    peer_address,
-                );
                 metrics.set_brownout_active(resilience.brownout.is_active());
                 let rejection_response = admission_rejection_response(&admission);
                 match admission {
