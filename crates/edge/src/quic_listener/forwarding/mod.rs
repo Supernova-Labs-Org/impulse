@@ -2,10 +2,13 @@ mod auth;
 mod dispatch;
 mod lb_key;
 mod orchestration;
+mod orchestration_service;
 mod outcome;
+pub(in crate::quic_listener) mod pipeline;
 mod prepare;
 mod resolve;
 mod response;
+mod selection;
 mod stream_progress;
 
 use self::prepare::RequestFinalizationConfig;

@@ -1,6 +1,4 @@
-use impulse_errors::ClassifiedUpstreamProxyError;
-
-use super::*;
+use super::{orchestration_service::ForwardingOrchestrationService, *};
 use crate::runtime::connection::{
     outcome::{BackendOutcomeTarget, RouteOutcomeTarget},
     request::RequestEnvelope,
@@ -12,31 +10,19 @@ pub(in crate::quic_listener) fn terminalize_stream(
     reason: TerminalReason,
     metrics: &Metrics,
 ) -> StreamPhase {
-    req.transition_to_terminal_with_cleanup(reason, metrics)
+    ForwardingOrchestrationService::terminalize(req, reason, metrics)
 }
 
 pub(in crate::quic_listener) fn backend_failure_reason_for_proxy_error(
     err: &ProxyError,
 ) -> BackendFailureReason {
-    match err {
-        ProxyError::Timeout => BackendFailureReason::UpstreamTimeout,
-        ProxyError::Tls(_) => BackendFailureReason::UpstreamTls,
-        ProxyError::Transport(_) | ProxyError::Pool(_) => BackendFailureReason::UpstreamTransport,
-        ProxyError::Protocol(_) => BackendFailureReason::UpstreamProtocol,
-        ProxyError::Bridge(_) => BackendFailureReason::UpstreamBridge,
-    }
+    ForwardingOrchestrationService::backend_failure_reason(err)
 }
 
 pub(in crate::quic_listener) fn rejection_reason_for_status(
     status: http::StatusCode,
 ) -> RejectionReason {
-    match status {
-        http::StatusCode::PAYLOAD_TOO_LARGE => RejectionReason::RequestBodyTooLarge,
-        http::StatusCode::TOO_MANY_REQUESTS => RejectionReason::RateLimited,
-        http::StatusCode::SERVICE_UNAVAILABLE => RejectionReason::Overloaded,
-        http::StatusCode::BAD_REQUEST => RejectionReason::ValidationFailed,
-        _ => RejectionReason::ValidationFailed,
-    }
+    ForwardingOrchestrationService::rejection_reason(status)
 }
 
 impl QUICListener {
@@ -45,43 +31,19 @@ impl QUICListener {
         request_id: Option<u64>,
         upstream_name: Option<&str>,
         backend_addr: &str,
-        classified: &ClassifiedUpstreamProxyError,
+        classified: &impulse_errors::ClassifiedUpstreamProxyError,
     ) {
-        let request_id = request_id
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "-".to_string());
-        let upstream_name = upstream_name.unwrap_or("-");
-        match classified.health_failure {
-            Some(health_mapping) => error!(
-                "phase={} request_id={} upstream={} backend={} upstream failure kind={:?} retryability={:?} health_reason={:?} metrics_reason={} detail={}",
-                phase,
-                request_id,
-                upstream_name,
-                backend_addr,
-                classified.kind,
-                classified.retryability,
-                health_mapping.failure_reason,
-                health_mapping.metrics_reason,
-                classified.detail
-            ),
-            None => error!(
-                "phase={} request_id={} upstream={} backend={} upstream failure kind={:?} retryability={:?} detail={}",
-                phase,
-                request_id,
-                upstream_name,
-                backend_addr,
-                classified.kind,
-                classified.retryability,
-                classified.detail
-            ),
-        }
+        ForwardingOrchestrationService::log_classified_upstream_failure(
+            phase,
+            request_id,
+            upstream_name,
+            backend_addr,
+            classified,
+        );
     }
 
     pub(super) fn is_internal_pool_control_error(error: &PoolError) -> bool {
-        matches!(
-            error,
-            PoolError::InflightLimiterClosed | PoolError::UnknownBackend(_)
-        )
+        ForwardingOrchestrationService::is_internal_pool_control_error(error)
     }
 
     pub(super) fn log_access(req: &RequestEnvelope, status: u16) {
@@ -169,20 +131,12 @@ impl QUICListener {
     }
 
     pub(super) fn request_outcome_route_target(req: &RequestEnvelope) -> RouteOutcomeTarget<'_> {
-        RouteOutcomeTarget {
-            route: req.upstream_name.as_deref().unwrap_or("unrouted"),
-        }
+        ForwardingOrchestrationService::route_target(req)
     }
 
     pub(super) fn request_outcome_backend_target(
         req: &RequestEnvelope,
     ) -> Option<BackendOutcomeTarget<'_>> {
-        req.upstream_name
-            .as_deref()
-            .map(|upstream| BackendOutcomeTarget {
-                upstream,
-                backend_addr: req.backend_addr.as_deref(),
-                backend_index: req.backend_index,
-            })
+        ForwardingOrchestrationService::backend_target(req)
     }
 }

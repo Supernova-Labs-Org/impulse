@@ -7,8 +7,9 @@ use tokio::{net::TcpListener, runtime::Handle};
 use super::state::{BootstrapStartupState, build_bootstrap_startup_state};
 use crate::{
     quic_listener::{QUICListener, runtime_handle, spawn_supervised_async_task},
-    runtime::listener::ShutdownSignal,
-    runtime::{bundle::RuntimeBundleHandle, shared_state::SharedRuntimeState},
+    runtime::{
+        bundle::RuntimeBundleHandle, listener::ShutdownSignal, shared_state::SharedRuntimeState,
+    },
 };
 
 pub(in crate::quic_listener) struct PreparedBootstrapListenerStartup {

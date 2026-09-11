@@ -1,8 +1,10 @@
 use std::{collections::HashMap, time::Duration};
 
 use super::{config_invalid, normalize_optional_string};
-use crate::runtime::RuntimeConfigError;
-use crate::validator::{is_valid_https_or_loopback_http_url, is_valid_https_url};
+use crate::{
+    runtime::RuntimeConfigError,
+    validator::{is_valid_https_or_loopback_http_url, is_valid_https_url},
+};
 
 fn normalize_string_vec(values: &[String]) -> Vec<String> {
     values

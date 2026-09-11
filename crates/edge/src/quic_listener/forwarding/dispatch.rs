@@ -1,15 +1,16 @@
 use std::convert::Infallible;
 
 use impulse_errors::{
-    HedgeOutcomeTelemetryReason, HedgePolicyDecision, HedgePolicyFacts, HedgePrimaryState,
-    RetryPolicyDecision, RetryPolicyFacts, evaluate_hedge_policy, evaluate_retry_policy,
-    is_idempotent_method,
+    HedgeOutcomeTelemetryReason, HedgePolicyDecision, RetryPolicyDecision, is_idempotent_method,
 };
 use impulse_lb::alternate_backend::{
     AlternateBackendDecision, AlternateBackendFailureReason, choose_alternate_backend,
 };
 
-use super::*;
+use super::{
+    selection::{ForwardingSelectionService, RetryHedgePolicyInputs},
+    *,
+};
 use crate::{
     observability::{HedgeDecisionReason, RetryDecisionReason},
     runtime::connection::{request::PendingForward, response::ForwardingPolicyTelemetry},
@@ -56,7 +57,7 @@ struct WebsocketTunnelForwardInput {
 struct RetryExecutionCtx<'a> {
     request_id: u64,
     route_name: &'a str,
-    policy: ForwardingRetryHedgePolicy,
+    policy: RetryHedgePolicyInputs,
     policy_telemetry: &'a mut ForwardingPolicyTelemetry,
     retry_budget: &'a crate::resilience::retry_budget::RetryBudget,
     alternate_backend: Option<&'a ResolvedAlternateBackend>,
@@ -64,86 +65,6 @@ struct RetryExecutionCtx<'a> {
     pending_forward: &'a PendingForward,
     circuit_breakers: &'a crate::resilience::circuit_breaker::CircuitBreakers,
     transport: &'a UpstreamTransportPool,
-}
-
-#[derive(Clone, Copy)]
-struct ForwardingRetryHedgePolicy {
-    method_idempotent: bool,
-    bodyless_mode: bool,
-    hedge_method_allowed: bool,
-    hedge_configured: bool,
-    hedge_tunnel_request: bool,
-}
-
-impl ForwardingRetryHedgePolicy {
-    fn new(
-        method_idempotent: bool,
-        bodyless_mode: bool,
-        hedge_method_allowed: bool,
-        hedge_configured: bool,
-        hedge_tunnel_request: bool,
-    ) -> Self {
-        Self {
-            method_idempotent,
-            bodyless_mode,
-            hedge_method_allowed,
-            hedge_configured,
-            hedge_tunnel_request,
-        }
-    }
-
-    fn hedge_before_delay(
-        self,
-        alternate_backend: Option<&ResolvedAlternateBackend>,
-    ) -> HedgePolicyDecision {
-        let (alternate_backend_available, alternate_backend_failure) =
-            alternate_backend_policy_state(alternate_backend);
-        evaluate_hedge_policy(HedgePolicyFacts {
-            hedging_configured: self.hedge_configured,
-            method_allowed: self.hedge_method_allowed,
-            request_body_replayable: self.bodyless_mode,
-            tunnel_request: self.hedge_tunnel_request,
-            alternate_backend_available,
-            alternate_backend_failure,
-            budget_available: false,
-            primary_state: HedgePrimaryState::InFlightBeforeDelay,
-        })
-    }
-
-    fn hedge_after_delay(self, budget_available: bool) -> HedgePolicyDecision {
-        evaluate_hedge_policy(HedgePolicyFacts {
-            hedging_configured: self.hedge_configured,
-            method_allowed: self.hedge_method_allowed,
-            request_body_replayable: self.bodyless_mode,
-            tunnel_request: self.hedge_tunnel_request,
-            alternate_backend_available: true,
-            alternate_backend_failure: None,
-            budget_available,
-            primary_state: HedgePrimaryState::InFlightAfterDelay,
-        })
-    }
-
-    fn retry_after_error(
-        self,
-        primary_err: &ProxyError,
-        retry_count: u8,
-        max_attempts: u8,
-        budget_available: bool,
-        alternate_backend: Option<&ResolvedAlternateBackend>,
-    ) -> RetryPolicyDecision {
-        let (alternate_backend_available, alternate_backend_failure) =
-            alternate_backend_policy_state(alternate_backend);
-        evaluate_retry_policy(RetryPolicyFacts {
-            retryability: impulse_errors::classify_retryability(primary_err),
-            method_idempotent: self.method_idempotent,
-            request_body_replayable: self.bodyless_mode,
-            attempt_count: retry_count,
-            max_attempts,
-            budget_available,
-            alternate_backend_available,
-            alternate_backend_failure,
-        })
-    }
 }
 
 fn alternate_backend_policy_state(
@@ -155,15 +76,6 @@ fn alternate_backend_policy_state(
     )
 }
 
-fn retry_budget_available_for_error(
-    primary_err: &ProxyError,
-    route_name: &str,
-    retry_budget: &crate::resilience::retry_budget::RetryBudget,
-) -> bool {
-    matches!(primary_err, ProxyError::Pool(PoolError::CircuitOpen(_)))
-        || retry_budget.allow_retry(route_name).is_ok()
-}
-
 impl QUICListener {
     async fn send_upstream_request(
         backend: &str,
@@ -171,11 +83,8 @@ impl QUICListener {
         circuit_breakers: &crate::resilience::circuit_breaker::CircuitBreakers,
         transport: &UpstreamTransportPool,
     ) -> Result<Response<Incoming>, ProxyError> {
-        let Some(breaker_permit) = circuit_breakers.allow_request(backend) else {
-            return Err(ProxyError::Pool(PoolError::CircuitOpen(
-                backend.to_string(),
-            )));
-        };
+        let breaker_permit =
+            ForwardingSelectionService::allow_backend_request(circuit_breakers, backend)?;
 
         let send_result = transport.send_backend_request(backend, request).await;
         if send_result.is_ok() {
@@ -192,11 +101,8 @@ impl QUICListener {
         circuit_breakers: &crate::resilience::circuit_breaker::CircuitBreakers,
         transport: &UpstreamTransportPool,
     ) -> Result<impulse_transport::BackendUpgradeResponse, ProxyError> {
-        let Some(breaker_permit) = circuit_breakers.allow_request(backend) else {
-            return Err(ProxyError::Pool(PoolError::CircuitOpen(
-                backend.to_string(),
-            )));
-        };
+        let breaker_permit =
+            ForwardingSelectionService::allow_backend_request(circuit_breakers, backend)?;
 
         let send_result = transport.send_http1_upgrade_request(backend, request).await;
         if send_result.is_ok() {
@@ -360,12 +266,19 @@ impl QUICListener {
             circuit_breakers,
             transport,
         } = retry_ctx;
+        let (alternate_backend_available, alternate_backend_failure) =
+            alternate_backend_policy_state(alternate_backend);
         let retry_decision = policy.retry_after_error(
             &primary_err,
             policy_telemetry.retry.count,
             MAX_UPSTREAM_RETRY_ATTEMPTS,
-            retry_budget_available_for_error(&primary_err, route_name, retry_budget),
-            alternate_backend,
+            ForwardingSelectionService::retry_budget_available(
+                &primary_err,
+                route_name,
+                retry_budget,
+            ),
+            alternate_backend_available,
+            alternate_backend_failure,
         );
         let (retry_reason, canonical_retry_reason) = match retry_decision {
             RetryPolicyDecision::Retry { reason } => {
@@ -446,7 +359,7 @@ impl QUICListener {
         let hedge_configured =
             resilience.hedging_route_enabled_for(pending_forward.upstream_name.as_ref());
         let hedge_tunnel_request = req.tunnel_mode != TunnelMode::None;
-        let policy = ForwardingRetryHedgePolicy::new(
+        let policy = RetryHedgePolicyInputs::new(
             method_idempotent,
             bodyless_mode,
             hedge_method_allowed,
@@ -484,9 +397,12 @@ impl QUICListener {
                             "missing upstream request for non-websocket forward".into(),
                         )
                     })?;
-                    let response: Response<Incoming> = match policy
-                        .hedge_before_delay(alternate_backend.as_ref())
-                    {
+                    let (alternate_backend_available, alternate_backend_failure) =
+                        alternate_backend_policy_state(alternate_backend.as_ref());
+                    let response: Response<Incoming> = match policy.hedge_before_delay(
+                        alternate_backend_available,
+                        alternate_backend_failure,
+                    ) {
                         HedgePolicyDecision::WaitForPrimary => {
                             let hedge_candidate = Self::build_alternate_bodyless_candidate(
                                 alternate_backend.as_ref(),
@@ -517,7 +433,7 @@ impl QUICListener {
                                     result?
                                 } else {
                                     match policy.hedge_after_delay(
-                                        retry_budget_available_for_error(
+                                        ForwardingSelectionService::retry_budget_available(
                                             &ProxyError::Timeout,
                                             route_name,
                                             retry_budget,

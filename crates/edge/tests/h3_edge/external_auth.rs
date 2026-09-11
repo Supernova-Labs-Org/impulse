@@ -1,8 +1,9 @@
-use super::*;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
+
+use super::*;
 
 fn configure_http_external_auth(
     config: &mut Config,

@@ -1,7 +1,10 @@
 use impulse_config::runtime::RuntimeUpstreamPolicy;
 
-use super::{lb_key::ResolvedLbKey, *};
-use crate::runtime::connection::outcome::{RouteOutcomeTarget, observe_proxy_error_outcome};
+use super::{selection::ForwardingSelectionService, *};
+use crate::{
+    request_pipeline::{RouteResolutionError, RouteResolutionService},
+    runtime::connection::outcome::{RouteOutcomeTarget, observe_proxy_error_outcome},
+};
 
 #[derive(Clone, Copy)]
 pub(in crate::quic_listener) struct TargetResolutionRequest<'a> {
@@ -115,11 +118,6 @@ pub(in crate::quic_listener) struct BootstrapTargetResolutionInput<'a> {
     pub(in crate::quic_listener) observation: ResolutionObservation<'a>,
 }
 
-struct BackendSelectionPlan {
-    lb_type: String,
-    lb_key: String,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RouteResolutionFailureKind {
     NoRoute,
@@ -230,7 +228,7 @@ impl QUICListener {
             observation,
         } = input;
         let TargetResolution { route, backend } =
-            match Self::resolve_backend_without_inflight_request(&request, &context) {
+            match Self::resolve_backend_internal(&request, &context, false) {
                 Ok(resolved) => resolved,
                 Err(err) => {
                     Self::observe_route_resolution_failure(
@@ -305,23 +303,25 @@ impl QUICListener {
         request: &TargetResolutionRequest<'_>,
         context: &ResolutionContext<'_>,
     ) -> Result<RouteResolution, ProxyError> {
-        if request.method.is_empty() || request.path.is_empty() {
-            return Err(ProxyError::Transport("empty method or path".into()));
-        }
-
-        let route_decision = context
-            .routing_index
-            .lookup_with_decision_for_method(request.path, request.authority, Some(request.method))
-            .ok_or_else(|| ProxyError::Transport(format!("no route for {}", request.path)))?;
-        let upstream_name = route_decision.upstream.to_string();
+        let route_target = RouteResolutionService::new(context.routing_index)
+            .resolve(request.method, request.path, request.authority)
+            .map_err(|error| match error {
+                RouteResolutionError::EmptyMethodOrPath => {
+                    ProxyError::Transport("empty method or path".into())
+                }
+                RouteResolutionError::NoRoute => {
+                    ProxyError::Transport(format!("no route for {}", request.path))
+                }
+            })?;
+        let upstream_name = route_target.upstream_name.to_string();
         let upstream_pool = context
             .upstream_pools
-            .get(route_decision.upstream)
+            .get(route_target.upstream_name.as_ref())
             .ok_or_else(|| ProxyError::Transport(format!("pool not found: {upstream_name}")))?
             .clone();
         let upstream_policy = context
             .upstream_policies
-            .get(route_decision.upstream)
+            .get(route_target.upstream_name.as_ref())
             .cloned()
             .unwrap_or_default();
 
@@ -329,78 +329,10 @@ impl QUICListener {
             upstream_name,
             upstream_pool,
             upstream_policy,
-            route_path_len: route_decision.matched_path_len,
-            route_host_specific: route_decision.host_specific,
-            route_reason: route_decision.reason,
+            route_path_len: route_target.matched_path_len,
+            route_host_specific: route_target.host_specific,
+            route_reason: route_target.reason,
         })
-    }
-
-    fn build_backend_selection_plan(
-        request: &TargetResolutionRequest<'_>,
-        pool: &UpstreamPool,
-    ) -> BackendSelectionPlan {
-        let ResolvedLbKey {
-            value: lb_key,
-            source: _lb_key_source,
-        } = Self::resolve_lb_key_for_runtime_request(
-            pool.lb_strategy(),
-            pool.lb_key_spec(),
-            request,
-        );
-        BackendSelectionPlan {
-            lb_type: pool.lb_strategy().canonical_name().to_string(),
-            lb_key,
-        }
-    }
-
-    fn no_servers_in_upstream_error() -> ProxyError {
-        ProxyError::Transport("no servers in upstream".into())
-    }
-
-    fn no_healthy_servers_error(pool: &UpstreamPool) -> ProxyError {
-        let summary = pool.membership_summary();
-        error!(
-            "no healthy backends available: {}/{} backends healthy",
-            summary.healthy_backends, summary.total_backends
-        );
-        ProxyError::Transport("no healthy servers".into())
-    }
-
-    fn select_backend_with_write_lock(
-        pool: &mut UpstreamPool,
-        plan: &BackendSelectionPlan,
-        begin_request: bool,
-    ) -> Result<BackendSelection, ProxyError> {
-        let idx = if begin_request {
-            pool.pick(plan.lb_key.as_str())
-        } else {
-            pool.pick_without_begin(plan.lb_key.as_str())
-        }
-        .ok_or_else(|| Self::no_healthy_servers_error(pool))?;
-        let backend_addr = pool
-            .backend_address(idx)
-            .map(str::to_string)
-            .ok_or_else(|| ProxyError::Transport("invalid server address".into()))?;
-        Ok(BackendSelection {
-            backend_addr,
-            backend_index: idx,
-            backend_lb: plan.lb_type.clone(),
-        })
-    }
-
-    fn select_backend_from_pool(
-        request: &TargetResolutionRequest<'_>,
-        upstream_pool: &Arc<RwLock<UpstreamPool>>,
-        begin_request: bool,
-    ) -> Result<BackendSelection, ProxyError> {
-        let mut pool = upstream_pool
-            .write()
-            .map_err(|_| ProxyError::Transport("upstream pool lock poisoned".into()))?;
-        if pool.is_empty() {
-            return Err(Self::no_servers_in_upstream_error());
-        }
-        let plan = Self::build_backend_selection_plan(request, &pool);
-        Self::select_backend_with_write_lock(&mut pool, &plan, begin_request)
     }
 
     fn log_backend_selection(
@@ -432,7 +364,11 @@ impl QUICListener {
         begin_request: bool,
     ) -> Result<TargetResolution, ProxyError> {
         let route = Self::resolve_route_target(request, context)?;
-        let backend = Self::select_backend_from_pool(request, &route.upstream_pool, begin_request)?;
+        let backend = ForwardingSelectionService::select_backend(
+            request,
+            &route.upstream_pool,
+            begin_request,
+        )?;
 
         Self::log_backend_selection(
             request,
@@ -444,13 +380,6 @@ impl QUICListener {
             &route.route_reason,
         );
         Ok(TargetResolution { route, backend })
-    }
-
-    fn resolve_backend_without_inflight_request(
-        request: &TargetResolutionRequest<'_>,
-        context: &ResolutionContext<'_>,
-    ) -> Result<TargetResolution, ProxyError> {
-        Self::resolve_backend_internal(request, context, false)
     }
 
     #[cfg(test)]

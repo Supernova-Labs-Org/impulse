@@ -1,5 +1,6 @@
-use super::*;
 use std::fmt;
+
+use super::*;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]

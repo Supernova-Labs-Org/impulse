@@ -7,6 +7,7 @@ use tokio::{sync::oneshot, task::AbortHandle};
 
 use super::{
     auth::start_external_auth_task,
+    pipeline::{ForwardingRequestPipeline, PipelineRequest, PipelineResolution},
     resolve::{
         ForwardTargetResolution, ForwardTargetResolutionInput, ResolutionContext,
         ResolutionObservation, TargetResolutionRequest,
@@ -16,13 +17,11 @@ use super::{
 use crate::{
     quic_listener::admission::{
         AdmissionPolicyDecision, AdmissionRejectionResponse, admission_rejection_response,
-        evaluate_forwarding_pre_admission_policy,
     },
     runtime::connection::{
         auth::{
             ExternalAuthCompletion, ExternalAuthFailureDisposition, ExternalAuthResult,
-            ExternalAuthTaskConfig, PendingHeaderMutation, apply_auth_request_mutations,
-            evaluate_external_auth_completion,
+            PendingHeaderMutation, apply_auth_request_mutations, evaluate_external_auth_completion,
         },
         outcome::{
             AdmissionOutcomeClass, BackendOutcomeTarget, RouteOutcomeTarget,
@@ -480,29 +479,43 @@ impl QUICListener {
                 .and_then(|header| std::str::from_utf8(header.value()).ok())
                 .map(str::to_string)
         };
-        let resolved = Self::resolve_forwarding_target(ForwardTargetResolutionInput {
-            request: TargetResolutionRequest::new(
+        let resolved = ForwardingRequestPipeline::new(resilience).resolve(
+            Self::resolve_forwarding_target(ForwardTargetResolutionInput {
+                request: TargetResolutionRequest::new(
+                    method,
+                    path,
+                    authority,
+                    Some(sticky_cid_key),
+                    Some(&lb_header_lookup),
+                ),
+                context: resolution_context,
+                observation: ResolutionObservation::new(metrics, request_start.elapsed()),
+            }),
+            PipelineRequest {
                 method,
                 path,
                 authority,
-                Some(sticky_cid_key),
-                Some(&lb_header_lookup),
-            ),
-            context: resolution_context,
-            observation: ResolutionObservation::new(metrics, request_start.elapsed()),
-        });
+                peer_address,
+                header_lookup: Some(&lb_header_lookup),
+            },
+        );
 
         let prepared = match resolved {
-            Ok(ForwardTargetResolution {
-                upstream_name,
-                upstream_pool,
-                upstream_policy,
-                route_path_len,
-                route_host_specific,
-                route_reason,
-                backend_addr,
-                backend_index,
-                backend_lb,
+            Ok(PipelineResolution {
+                target:
+                    ForwardTargetResolution {
+                        upstream_name,
+                        upstream_pool,
+                        upstream_policy: _,
+                        route_path_len,
+                        route_host_specific,
+                        route_reason,
+                        backend_addr,
+                        backend_index,
+                        backend_lb,
+                    },
+                policy: resolved_policy,
+                admission,
             }) => {
                 let routing = RoutingSnapshot {
                     backend_addr: backend_addr.clone(),
@@ -513,19 +526,6 @@ impl QUICListener {
                     route_host_specific,
                     backend_lb: Some(backend_lb.clone()),
                 };
-                let admission = evaluate_forwarding_pre_admission_policy(
-                    &upstream_policy,
-                    Some(&lb_header_lookup),
-                    &resilience.brownout,
-                    resilience.adaptive_admission.inflight_percent(),
-                    &upstream_name,
-                    method,
-                    path,
-                    authority,
-                    peer_address,
-                    resilience.shed_retry_after_seconds,
-                    &resilience.scoped_rate_limits,
-                );
                 metrics.set_brownout_active(resilience.brownout.is_active());
                 let rejection_response = admission_rejection_response(&admission);
                 match admission {
@@ -652,10 +652,6 @@ impl QUICListener {
                     }
                 }
 
-                let external_auth = upstream_policy.upstream_auth.external_auth.clone();
-                let auth_disposition = external_auth
-                    .as_ref()
-                    .map(|auth| ExternalAuthTaskConfig::from_external_auth(auth).disposition);
                 let request_id = intake.request_id();
                 let pending_forward = Arc::new(PendingForward {
                     method: Arc::<str>::from(method),
@@ -689,8 +685,8 @@ impl QUICListener {
                         .traceparent
                         .as_deref()
                         .map(Arc::<str>::from),
-                    host_policy: upstream_policy.host.0.clone(),
-                    forwarded_header_policy: upstream_policy.forwarded_headers.0.clone(),
+                    host_policy: resolved_policy.host_policy,
+                    forwarded_header_policy: resolved_policy.forwarded_header_policy,
                     auth_header_mutations: Vec::new(),
                 });
                 let dispatch_ready = Self::build_dispatch_ready_candidate(
@@ -700,17 +696,17 @@ impl QUICListener {
                     pending_forward,
                 );
 
-                Some(match (external_auth, auth_disposition) {
-                    (Some(external_auth), Some(auth_disposition)) => {
-                        PreAdmissionNextState::RequiresExternalAuth(Box::new(
-                            ExternalAuthCandidate {
-                                request: dispatch_ready,
-                                external_auth,
-                                auth_disposition,
-                            },
-                        ))
+                Some(match resolved_policy.external_auth {
+                    Some(external_auth) => PreAdmissionNextState::RequiresExternalAuth(Box::new(
+                        ExternalAuthCandidate {
+                            request: dispatch_ready,
+                            external_auth: external_auth.policy,
+                            auth_disposition: external_auth.disposition,
+                        },
+                    )),
+                    None => {
+                        PreAdmissionNextState::ReadyForPostAuthAdmission(Box::new(dispatch_ready))
                     }
-                    _ => PreAdmissionNextState::ReadyForPostAuthAdmission(Box::new(dispatch_ready)),
                 })
             }
             Err(err) => {
