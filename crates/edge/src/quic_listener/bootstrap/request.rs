@@ -23,12 +23,11 @@ use log::warn;
 use super::{
     super::{
         QUICListener,
-        admission::{
-            AdmissionPolicyDecision, RequestAdmissionService, admission_rejection_response,
-        },
+        admission::{AdmissionPolicyDecision, admission_rejection_response},
         forwarding::{
             BootstrapTargetResolutionInput, ResolutionContext, ResolutionObservation,
             TargetResolutionRequest, evaluate_pending_forward_external_auth,
+            pipeline::{ForwardingRequestPipeline, PipelineRequest, PipelineRoute},
         },
     },
     context::BootstrapRequestCtx,
@@ -479,16 +478,19 @@ pub(in crate::quic_listener) fn evaluate_bootstrap_request_policy(
         }
     };
 
-    let admission = RequestAdmissionService::new(&input.request_ctx.runtime.resilience)
-        .evaluate_pre_auth(
-        &resolved.upstream_policy,
-        Some(&lb_header_lookup),
-        &resolved.upstream_name,
-        input.intake.method.as_ref(),
-        &input.intake.path,
-        input.intake.authority.as_deref(),
-        input.request_ctx.peer,
-    );
+    let pipeline = ForwardingRequestPipeline::new(&input.request_ctx.runtime.resilience);
+    let admission = pipeline
+        .evaluate(
+            PipelineRoute::new(&resolved.upstream_name, &resolved.upstream_policy),
+            PipelineRequest {
+                method: input.intake.method.as_ref(),
+                path: &input.intake.path,
+                authority: input.intake.authority.as_deref(),
+                peer_address: input.request_ctx.peer,
+                header_lookup: Some(&lb_header_lookup),
+            },
+        )
+        .admission;
     input
         .request_ctx
         .runtime

@@ -17,50 +17,86 @@ use crate::{
 /// Protocol adapters supply their route/selection result and retain ownership
 /// of parsing, response writing, and connection lifecycle state.
 #[derive(Clone, Copy)]
-pub(super) struct ForwardingRequestPipeline<'a> {
+pub(in crate::quic_listener) struct ForwardingRequestPipeline<'a> {
     resilience: &'a RuntimeResilience,
 }
 
-pub(super) struct PipelineRequest<'a> {
-    pub(super) method: &'a str,
-    pub(super) path: &'a str,
-    pub(super) authority: Option<&'a str>,
-    pub(super) peer_address: SocketAddr,
-    pub(super) header_lookup: Option<&'a LbHeaderLookup<'a>>,
+pub(in crate::quic_listener) struct PipelineRequest<'a> {
+    pub(in crate::quic_listener) method: &'a str,
+    pub(in crate::quic_listener) path: &'a str,
+    pub(in crate::quic_listener) authority: Option<&'a str>,
+    pub(in crate::quic_listener) peer_address: SocketAddr,
+    pub(in crate::quic_listener) header_lookup: Option<&'a LbHeaderLookup<'a>>,
 }
 
-pub(super) struct PipelineResolution {
+pub(in crate::quic_listener) struct PipelineResolution {
     pub(super) target: ForwardTargetResolution,
     pub(super) policy: ResolvedRequestPolicy,
     pub(super) admission: AdmissionPolicyDecision,
 }
 
+#[derive(Clone, Copy)]
+pub(in crate::quic_listener) struct PipelineRoute<'a> {
+    upstream_name: &'a str,
+    upstream_policy: &'a impulse_config::runtime::RuntimeUpstreamPolicy,
+}
+
+impl<'a> PipelineRoute<'a> {
+    pub(in crate::quic_listener) const fn new(
+        upstream_name: &'a str,
+        upstream_policy: &'a impulse_config::runtime::RuntimeUpstreamPolicy,
+    ) -> Self {
+        Self {
+            upstream_name,
+            upstream_policy,
+        }
+    }
+}
+
+pub(in crate::quic_listener) struct PipelinePolicyAdmission {
+    pub(in crate::quic_listener) policy: ResolvedRequestPolicy,
+    pub(in crate::quic_listener) admission: AdmissionPolicyDecision,
+}
+
 impl<'a> ForwardingRequestPipeline<'a> {
-    pub(super) const fn new(resilience: &'a RuntimeResilience) -> Self {
+    pub(in crate::quic_listener) const fn new(resilience: &'a RuntimeResilience) -> Self {
         Self { resilience }
     }
 
-    pub(super) fn resolve(
+    pub(in crate::quic_listener) fn resolve(
         self,
         target: Result<ForwardTargetResolution, ProxyError>,
         request: PipelineRequest<'_>,
     ) -> Result<PipelineResolution, ProxyError> {
         let target = target?;
-        let policy = RequestPolicyService::resolve(&target.upstream_policy);
+        let evaluation = self.evaluate(
+            PipelineRoute::new(&target.upstream_name, &target.upstream_policy),
+            request,
+        );
+
+        Ok(PipelineResolution {
+            target,
+            policy: evaluation.policy,
+            admission: evaluation.admission,
+        })
+    }
+
+    pub(in crate::quic_listener) fn evaluate(
+        self,
+        route: PipelineRoute<'_>,
+        request: PipelineRequest<'_>,
+    ) -> PipelinePolicyAdmission {
+        let policy = RequestPolicyService::resolve(route.upstream_policy);
         let admission = RequestAdmissionService::new(self.resilience).evaluate_pre_auth(
             &policy.local_auth_policy,
             request.header_lookup,
-            &target.upstream_name,
+            route.upstream_name,
             request.method,
             request.path,
             request.authority,
             request.peer_address,
         );
 
-        Ok(PipelineResolution {
-            target,
-            policy,
-            admission,
-        })
+        PipelinePolicyAdmission { policy, admission }
     }
 }

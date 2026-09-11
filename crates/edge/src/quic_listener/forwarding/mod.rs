@@ -4,7 +4,7 @@ mod lb_key;
 mod orchestration;
 mod orchestration_service;
 mod outcome;
-mod pipeline;
+pub(in crate::quic_listener) mod pipeline;
 mod prepare;
 mod resolve;
 mod response;
