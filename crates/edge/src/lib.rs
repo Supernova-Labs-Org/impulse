@@ -12,6 +12,8 @@ mod hash;
 pub mod metrics;
 mod observability;
 mod quic_listener;
+#[allow(dead_code)] // Introduced before protocol adapters migrate to the shared contracts.
+mod request_pipeline;
 pub mod resilience;
 pub mod routing;
 pub mod runtime;
