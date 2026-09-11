@@ -6,6 +6,7 @@ mod outcome;
 mod prepare;
 mod resolve;
 mod response;
+mod selection;
 mod stream_progress;
 
 use self::prepare::RequestFinalizationConfig;

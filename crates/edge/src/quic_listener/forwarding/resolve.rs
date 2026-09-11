@@ -1,6 +1,6 @@
 use impulse_config::runtime::RuntimeUpstreamPolicy;
 
-use super::{lb_key::ResolvedLbKey, *};
+use super::{selection::ForwardingSelectionService, *};
 use crate::{
     request_pipeline::{RouteResolutionError, RouteResolutionService},
     runtime::connection::outcome::{RouteOutcomeTarget, observe_proxy_error_outcome},
@@ -116,11 +116,6 @@ pub(in crate::quic_listener) struct BootstrapTargetResolutionInput<'a> {
     pub(in crate::quic_listener) request: TargetResolutionRequest<'a>,
     pub(in crate::quic_listener) context: ResolutionContext<'a>,
     pub(in crate::quic_listener) observation: ResolutionObservation<'a>,
-}
-
-struct BackendSelectionPlan {
-    lb_type: String,
-    lb_key: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -340,74 +335,6 @@ impl QUICListener {
         })
     }
 
-    fn build_backend_selection_plan(
-        request: &TargetResolutionRequest<'_>,
-        pool: &UpstreamPool,
-    ) -> BackendSelectionPlan {
-        let ResolvedLbKey {
-            value: lb_key,
-            source: _lb_key_source,
-        } = Self::resolve_lb_key_for_runtime_request(
-            pool.lb_strategy(),
-            pool.lb_key_spec(),
-            request,
-        );
-        BackendSelectionPlan {
-            lb_type: pool.lb_strategy().canonical_name().to_string(),
-            lb_key,
-        }
-    }
-
-    fn no_servers_in_upstream_error() -> ProxyError {
-        ProxyError::Transport("no servers in upstream".into())
-    }
-
-    fn no_healthy_servers_error(pool: &UpstreamPool) -> ProxyError {
-        let summary = pool.membership_summary();
-        error!(
-            "no healthy backends available: {}/{} backends healthy",
-            summary.healthy_backends, summary.total_backends
-        );
-        ProxyError::Transport("no healthy servers".into())
-    }
-
-    fn select_backend_with_write_lock(
-        pool: &mut UpstreamPool,
-        plan: &BackendSelectionPlan,
-        begin_request: bool,
-    ) -> Result<BackendSelection, ProxyError> {
-        let idx = if begin_request {
-            pool.pick(plan.lb_key.as_str())
-        } else {
-            pool.pick_without_begin(plan.lb_key.as_str())
-        }
-        .ok_or_else(|| Self::no_healthy_servers_error(pool))?;
-        let backend_addr = pool
-            .backend_address(idx)
-            .map(str::to_string)
-            .ok_or_else(|| ProxyError::Transport("invalid server address".into()))?;
-        Ok(BackendSelection {
-            backend_addr,
-            backend_index: idx,
-            backend_lb: plan.lb_type.clone(),
-        })
-    }
-
-    fn select_backend_from_pool(
-        request: &TargetResolutionRequest<'_>,
-        upstream_pool: &Arc<RwLock<UpstreamPool>>,
-        begin_request: bool,
-    ) -> Result<BackendSelection, ProxyError> {
-        let mut pool = upstream_pool
-            .write()
-            .map_err(|_| ProxyError::Transport("upstream pool lock poisoned".into()))?;
-        if pool.is_empty() {
-            return Err(Self::no_servers_in_upstream_error());
-        }
-        let plan = Self::build_backend_selection_plan(request, &pool);
-        Self::select_backend_with_write_lock(&mut pool, &plan, begin_request)
-    }
-
     fn log_backend_selection(
         request: &TargetResolutionRequest<'_>,
         backend_addr: &str,
@@ -437,7 +364,11 @@ impl QUICListener {
         begin_request: bool,
     ) -> Result<TargetResolution, ProxyError> {
         let route = Self::resolve_route_target(request, context)?;
-        let backend = Self::select_backend_from_pool(request, &route.upstream_pool, begin_request)?;
+        let backend = ForwardingSelectionService::select_backend(
+            request,
+            &route.upstream_pool,
+            begin_request,
+        )?;
 
         Self::log_backend_selection(
             request,
