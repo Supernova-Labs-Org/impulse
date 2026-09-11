@@ -5,6 +5,8 @@ use std::sync::{
 
 use crate::backend_pool::BackendPool;
 
+const MAX_WEIGHTED_SCHEDULE_LENGTH: i64 = 1024;
+
 pub struct RoundRobin {
     next: usize,
     next_read: AtomicUsize,
@@ -96,9 +98,14 @@ fn build_weighted_sequence(pool: &BackendPool) -> Vec<usize> {
         .collect();
     let total_weight: i64 = normalized.iter().map(|(_, weight)| *weight).sum();
     let mut current_weights = vec![0_i64; normalized.len()];
-    let mut sequence = Vec::with_capacity(total_weight as usize);
+    // Keep the schedule bounded. For ordinary weights this preserves the
+    // exact GCD-normalized sequence; for very large coprime totals it uses a
+    // deterministic bounded sample instead of holding the write lock while
+    // doing an unbounded O(backends * total_weight) rebuild.
+    let schedule_length = total_weight.min(MAX_WEIGHTED_SCHEDULE_LENGTH);
+    let mut sequence = Vec::with_capacity(schedule_length as usize);
 
-    for _ in 0..total_weight {
+    for _ in 0..schedule_length {
         let mut selected = 0usize;
         let mut best_weight = i64::MIN;
 
@@ -142,6 +149,7 @@ mod tests {
     use impulse_config::config::{Backend, HealthCheck};
 
     use super::RoundRobin;
+    use super::{MAX_WEIGHTED_SCHEDULE_LENGTH, build_weighted_sequence};
     use crate::{backend::BackendState, backend_pool::BackendPool};
 
     fn create_backend_state(address: &str, weight: u32) -> BackendState {
@@ -233,5 +241,18 @@ mod tests {
 
         let mut rr = RoundRobin::new();
         assert!(rr.pick(&pool).is_none());
+    }
+
+    #[test]
+    fn weighted_schedule_is_bounded_for_many_coprime_weights() {
+        let pool = BackendPool::new_from_states(
+            (1..=1000)
+                .map(|weight| create_backend_state(&format!("127.0.0.1:{weight}"), weight))
+                .collect(),
+        );
+
+        let sequence = build_weighted_sequence(&pool);
+        assert!(!sequence.is_empty());
+        assert!(sequence.len() <= MAX_WEIGHTED_SCHEDULE_LENGTH as usize);
     }
 }
