@@ -744,6 +744,7 @@ fn activation_service_rejects_restart_required_changes_without_mutating_active_g
 
 #[test]
 fn rollback_service_restores_retained_generation_by_id_and_records_rollback_status() {
+    impulse_utils::logger::set_log_level("trace").expect("set initial log level");
     let dir = tempdir().expect("tempdir");
     let (cert, key) = write_test_cert_for_name(dir.path(), "server", "api.example.com");
 
@@ -795,6 +796,7 @@ fn rollback_service_restores_retained_generation_by_id_and_records_rollback_stat
     assert_eq!(rollback.rolled_back_to, Some(1));
     assert_eq!(rollback.active_generation, 4);
     assert_eq!(handle.current_generation(), 4);
+    assert_eq!(log::max_level(), LevelFilter::Info);
     assert_eq!(
         rollback.history_entry.operation,
         GenerationOperation::Rollback
@@ -4270,17 +4272,13 @@ fn validate_startup_owned_reload_compatibility_rejects_control_plane_thread_chan
 }
 
 #[test]
-fn apply_live_log_level_reload_updates_global_filter() {
+fn set_log_level_updates_global_filter_and_is_idempotent_when_unchanged() {
     impulse_utils::logger::set_log_level("info").expect("set initial level");
 
-    let changed = QUICListener::apply_live_log_level_reload("info", "haunt")
-        .expect("apply live log level reload");
-    assert!(changed);
+    impulse_utils::logger::set_log_level("haunt").expect("set live log level");
     assert_eq!(log::max_level(), LevelFilter::Debug);
 
-    let changed = QUICListener::apply_live_log_level_reload("haunt", "haunt")
-        .expect("same-level reload should succeed");
-    assert!(!changed);
+    impulse_utils::logger::set_log_level("haunt").expect("re-applying the same level succeeds");
     assert_eq!(log::max_level(), LevelFilter::Debug);
 }
 
