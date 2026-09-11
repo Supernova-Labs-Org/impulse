@@ -218,6 +218,7 @@ impl RouteIndex {
                 upstream: self.upstream_names[best.candidate.route.upstream_idx].as_str(),
                 matched_path_len: best.candidate.route.path_len,
                 host_specific: best.candidate.route.host_specific,
+                method_specific: best.candidate.route.method_specific,
                 reason: best.decision_reason.unwrap_or(fallback_reason),
             });
         }
@@ -227,6 +228,7 @@ impl RouteIndex {
                 upstream: self.upstream_names[default_route.candidate.route.upstream_idx].as_str(),
                 matched_path_len: default_route.candidate.route.path_len,
                 host_specific: default_route.candidate.route.host_specific,
+                method_specific: default_route.candidate.route.method_specific,
                 reason: default_route
                     .decision_reason
                     .unwrap_or(RouteDecisionReason::DefaultPathLonger),
@@ -235,6 +237,7 @@ impl RouteIndex {
                 upstream: self.upstream_names[host_route.candidate.route.upstream_idx].as_str(),
                 matched_path_len: host_route.candidate.route.path_len,
                 host_specific: host_route.candidate.route.host_specific,
+                method_specific: host_route.candidate.route.method_specific,
                 reason: host_route
                     .decision_reason
                     .unwrap_or(RouteDecisionReason::HostTrieNoDefault),
@@ -270,6 +273,7 @@ impl RouteIndex {
                     upstream: self.upstream_names[selected.route.upstream_idx].as_str(),
                     matched_path_len: selected.route.path_len,
                     host_specific: selected.route.host_specific,
+                    method_specific: selected.route.method_specific,
                     reason: if selected == candidate.candidate {
                         candidate.decision_reason.unwrap_or(fallback_reason)
                     } else {

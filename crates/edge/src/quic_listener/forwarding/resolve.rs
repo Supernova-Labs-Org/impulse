@@ -1,7 +1,10 @@
 use impulse_config::runtime::RuntimeUpstreamPolicy;
 
 use super::{lb_key::ResolvedLbKey, *};
-use crate::runtime::connection::outcome::{RouteOutcomeTarget, observe_proxy_error_outcome};
+use crate::{
+    request_pipeline::{RouteResolutionError, RouteResolutionService},
+    runtime::connection::outcome::{RouteOutcomeTarget, observe_proxy_error_outcome},
+};
 
 #[derive(Clone, Copy)]
 pub(in crate::quic_listener) struct TargetResolutionRequest<'a> {
@@ -305,23 +308,25 @@ impl QUICListener {
         request: &TargetResolutionRequest<'_>,
         context: &ResolutionContext<'_>,
     ) -> Result<RouteResolution, ProxyError> {
-        if request.method.is_empty() || request.path.is_empty() {
-            return Err(ProxyError::Transport("empty method or path".into()));
-        }
-
-        let route_decision = context
-            .routing_index
-            .lookup_with_decision_for_method(request.path, request.authority, Some(request.method))
-            .ok_or_else(|| ProxyError::Transport(format!("no route for {}", request.path)))?;
-        let upstream_name = route_decision.upstream.to_string();
+        let route_target = RouteResolutionService::new(context.routing_index)
+            .resolve(request.method, request.path, request.authority)
+            .map_err(|error| match error {
+                RouteResolutionError::EmptyMethodOrPath => {
+                    ProxyError::Transport("empty method or path".into())
+                }
+                RouteResolutionError::NoRoute => {
+                    ProxyError::Transport(format!("no route for {}", request.path))
+                }
+            })?;
+        let upstream_name = route_target.upstream_name.to_string();
         let upstream_pool = context
             .upstream_pools
-            .get(route_decision.upstream)
+            .get(route_target.upstream_name.as_ref())
             .ok_or_else(|| ProxyError::Transport(format!("pool not found: {upstream_name}")))?
             .clone();
         let upstream_policy = context
             .upstream_policies
-            .get(route_decision.upstream)
+            .get(route_target.upstream_name.as_ref())
             .cloned()
             .unwrap_or_default();
 
@@ -329,9 +334,9 @@ impl QUICListener {
             upstream_name,
             upstream_pool,
             upstream_policy,
-            route_path_len: route_decision.matched_path_len,
-            route_host_specific: route_decision.host_specific,
-            route_reason: route_decision.reason,
+            route_path_len: route_target.matched_path_len,
+            route_host_specific: route_target.host_specific,
+            route_reason: route_target.reason,
         })
     }
 

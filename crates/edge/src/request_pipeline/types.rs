@@ -2,6 +2,8 @@ use std::{net::SocketAddr, sync::Arc, time::Instant};
 
 use http::{HeaderMap, Method};
 
+use crate::routing::RouteDecisionReason;
+
 /// HTTP request data normalized by an ingress adapter before policy evaluation.
 ///
 /// The fields deliberately describe HTTP semantics only. Connection, stream,
@@ -22,6 +24,7 @@ pub(crate) struct ResolvedRouteTarget {
     pub(crate) matched_path_len: usize,
     pub(crate) host_specific: bool,
     pub(crate) method_specific: bool,
+    pub(crate) reason: RouteDecisionReason,
 }
 
 /// Request-scoped identity and timing data shared across request services.

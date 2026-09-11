@@ -29,6 +29,7 @@ pub struct RouteDecision<'a> {
     pub upstream: &'a str,
     pub matched_path_len: usize,
     pub host_specific: bool,
+    pub method_specific: bool,
     pub reason: RouteDecisionReason,
 }
 
