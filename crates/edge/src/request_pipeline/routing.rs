@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{request_pipeline::ResolvedRouteTarget, routing::RouteIndex};
+use crate::{request_pipeline::ResolvedRouteTarget, routing::index::RouteIndex};
 
 /// Shared route-index lookup service for protocol adapters.
 #[derive(Clone, Copy)]

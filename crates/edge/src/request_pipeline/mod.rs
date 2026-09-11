@@ -5,12 +5,6 @@ mod policy;
 mod routing;
 mod types;
 
-pub(crate) use outcome::{
-    AdmissionOutcome, AdmissionRejectionReason, ForwardingFailureReason, ForwardingOutcome,
-    ResponseAbortReason, ResponseOutcome,
-};
-pub(crate) use policy::{ExternalAuthPlan, RequestPolicyService, ResolvedRequestPolicy};
+pub(crate) use policy::{RequestPolicyService, ResolvedRequestPolicy};
 pub(crate) use routing::{RouteResolutionError, RouteResolutionService};
-pub(crate) use types::{
-    NormalizedRequestMetadata, ResolvedRouteTarget, SharedRequestContext,
-};
+pub(crate) use types::ResolvedRouteTarget;

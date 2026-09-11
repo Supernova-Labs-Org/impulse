@@ -20,17 +20,17 @@ use super::{
 /// It owns the ordering of pre-auth and post-auth admission checks while the
 /// protocol adapter retains metrics observation and response serialization.
 #[derive(Clone, Copy)]
-pub(super) struct RequestAdmissionService<'a> {
+pub(in crate::quic_listener) struct RequestAdmissionService<'a> {
     resilience: &'a RuntimeResilience,
 }
 
 impl<'a> RequestAdmissionService<'a> {
-    pub(super) const fn new(resilience: &'a RuntimeResilience) -> Self {
+    pub(in crate::quic_listener) const fn new(resilience: &'a RuntimeResilience) -> Self {
         Self { resilience }
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn evaluate_pre_auth(
+    pub(in crate::quic_listener) fn evaluate_pre_auth(
         self,
         policy: &RuntimeUpstreamPolicy,
         header_lookup: Option<&LbHeaderLookup<'_>>,
@@ -55,7 +55,7 @@ impl<'a> RequestAdmissionService<'a> {
         )
     }
 
-    pub(super) fn execute_post_auth(
+    pub(in crate::quic_listener) fn execute_post_auth(
         self,
         pending_forward: &PendingForward,
         upstream_pool: Option<&Arc<RwLock<UpstreamPool>>>,

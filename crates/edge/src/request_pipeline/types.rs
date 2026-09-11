@@ -2,7 +2,7 @@ use std::{net::SocketAddr, sync::Arc, time::Instant};
 
 use http::{HeaderMap, Method};
 
-use crate::routing::RouteDecisionReason;
+use crate::routing::decision::RouteDecisionReason;
 
 /// HTTP request data normalized by an ingress adapter before policy evaluation.
 ///

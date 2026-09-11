@@ -29,7 +29,7 @@ pub(in crate::quic_listener) struct PipelineRequest<'a> {
     pub(in crate::quic_listener) header_lookup: Option<&'a LbHeaderLookup<'a>>,
 }
 
-pub(in crate::quic_listener) struct PipelineResolution {
+pub(super) struct PipelineResolution {
     pub(super) target: ForwardTargetResolution,
     pub(super) policy: ResolvedRequestPolicy,
     pub(super) admission: AdmissionPolicyDecision,
@@ -63,7 +63,7 @@ impl<'a> ForwardingRequestPipeline<'a> {
         Self { resilience }
     }
 
-    pub(in crate::quic_listener) fn resolve(
+    pub(super) fn resolve(
         self,
         target: Result<ForwardTargetResolution, ProxyError>,
         request: PipelineRequest<'_>,

@@ -1,6 +1,7 @@
 use std::{borrow::Cow, collections::VecDeque, convert::Infallible};
 
 use http_body_util::Full;
+use impulse_config::runtime::RuntimeExternalAuth;
 use smallvec::SmallVec;
 use tokio::{sync::oneshot, task::AbortHandle};
 

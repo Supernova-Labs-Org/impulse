@@ -39,7 +39,10 @@ impl ForwardingSelectionService {
             return Err(ProxyError::Transport("no servers in upstream".into()));
         }
 
-        let ResolvedLbKey { value: lb_key, .. } = QUICListener::resolve_lb_key_for_runtime_request(
+        let ResolvedLbKey {
+            value: lb_key,
+            source: _lb_key_source,
+        } = QUICListener::resolve_lb_key_for_runtime_request(
             pool.lb_strategy(),
             pool.lb_key_spec(),
             request,
