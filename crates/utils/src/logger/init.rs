@@ -1,3 +1,5 @@
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{
     fs::{File, OpenOptions, create_dir_all},
     io::Write,
@@ -7,9 +9,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-
-#[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 use env_logger::{Builder, Target};
 use log::LevelFilter;
@@ -189,20 +188,21 @@ pub fn set_log_level(level: &str) -> Result<(), LogLevelError> {
 
 fn parse_log_level_filter(level: &str) -> Result<LevelFilter, LogLevelError> {
     match level.to_ascii_lowercase().as_str() {
-        "whisper" | "trace" => Ok(LevelFilter::Trace),
-        "haunt" | "debug" => Ok(LevelFilter::Debug),
-        "impulse" | "info" => Ok(LevelFilter::Info),
-        "scream" | "warn" => Ok(LevelFilter::Warn),
-        "poltergeist" | "error" => Ok(LevelFilter::Error),
-        "silence" | "off" => Ok(LevelFilter::Off),
+        "trace" => Ok(LevelFilter::Trace),
+        "debug" => Ok(LevelFilter::Debug),
+        "info" => Ok(LevelFilter::Info),
+        "warn" => Ok(LevelFilter::Warn),
+        "error" => Ok(LevelFilter::Error),
+        "off" => Ok(LevelFilter::Off),
         _ => Err(LogLevelError::new(level)),
     }
 }
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::open_log_file;
     use std::{fs, os::unix::fs::PermissionsExt};
+
+    use super::open_log_file;
 
     #[test]
     fn open_log_file_tightens_preexisting_permissions() {

@@ -4275,10 +4275,10 @@ fn validate_startup_owned_reload_compatibility_rejects_control_plane_thread_chan
 fn set_log_level_updates_global_filter_and_is_idempotent_when_unchanged() {
     impulse_utils::logger::set_log_level("info").expect("set initial level");
 
-    impulse_utils::logger::set_log_level("haunt").expect("set live log level");
+    impulse_utils::logger::set_log_level("debug").expect("set live log level");
     assert_eq!(log::max_level(), LevelFilter::Debug);
 
-    impulse_utils::logger::set_log_level("haunt").expect("re-applying the same level succeeds");
+    impulse_utils::logger::set_log_level("debug").expect("re-applying the same level succeeds");
     assert_eq!(log::max_level(), LevelFilter::Debug);
 }
 

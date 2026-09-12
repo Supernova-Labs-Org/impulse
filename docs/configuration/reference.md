@@ -1197,21 +1197,12 @@ Controls logging output, verbosity, and destination.
 
 Log levels in order of increasing verbosity:
 
-- `silence`: No logging output
-- `poltergeist`: Error messages only
-- `scream`: Warnings and errors
-- `impulse`: Informational messages, warnings, and errors
-- `haunt`: Debug information
-- `whisper`: Trace-level debugging
-
-Standard log level mapping:
-
-- `silence` = off
-- `poltergeist` = error
-- `scream` = warn
-- `impulse` = info
-- `haunt` = debug
-- `whisper` = trace
+- `off`: No logging output
+- `error`: Error messages only
+- `warn`: Warnings and errors
+- `info`: Informational messages, warnings, and errors
+- `debug`: Debug information
+- `trace`: Trace-level debugging
 
 ### Examples
 
@@ -1236,12 +1227,12 @@ log:
 
 # Development — debug to stderr
 log:
-  level: haunt  # debug level
+  level: debug  # debug level
   format: plain
 
 # Troubleshooting — trace to file
 log:
-  level: whisper  # trace level
+  level: trace  # trace level
   format: json
   file:
     enabled: true
