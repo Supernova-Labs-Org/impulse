@@ -1075,6 +1075,68 @@ observability:
     }
 
     #[test]
+    fn resolve_config_secrets_rejects_two_distinct_file_refs_resolving_to_same_value() {
+        let dir = tempdir().expect("tempdir");
+        fs::write(dir.path().join("a.txt"), b"shared-secret-value").expect("write token file a");
+        fs::write(dir.path().join("b.txt"), b"shared-secret-value").expect("write token file b");
+
+        let mut yaml = minimal_config_yaml();
+        yaml.push_str(&format!(
+            r#"
+observability:
+  control_api:
+    enabled: true
+    auth:
+      bearer_tokens:
+        - token_ref:
+            ref: "file://{path}/a.txt"
+          role: viewer
+          actor_id: alice
+        - token_ref:
+            ref: "file://{path}/b.txt"
+          role: admin
+          actor_id: bob
+"#,
+            path = dir.path().to_string_lossy()
+        ));
+
+        let config: Config = serde_yaml::from_str(&yaml).expect("parse config");
+        let err =
+            resolve_config_secrets(&config).expect_err("conflicting duplicate must be rejected");
+        assert!(err.to_string().contains("duplicate_token"));
+    }
+
+    #[test]
+    fn resolve_config_secrets_accepts_repeated_file_backed_token_with_identical_role_and_actor() {
+        let dir = tempdir().expect("tempdir");
+        fs::write(dir.path().join("a.txt"), b"shared-secret-value").expect("write token file a");
+        fs::write(dir.path().join("b.txt"), b"shared-secret-value").expect("write token file b");
+
+        let mut yaml = minimal_config_yaml();
+        yaml.push_str(&format!(
+            r#"
+observability:
+  control_api:
+    enabled: true
+    auth:
+      bearer_tokens:
+        - token_ref:
+            ref: "file://{path}/a.txt"
+          role: admin
+          actor_id: admin
+        - token_ref:
+            ref: "file://{path}/b.txt"
+          role: admin
+          actor_id: admin
+"#,
+            path = dir.path().to_string_lossy()
+        ));
+
+        let config: Config = serde_yaml::from_str(&yaml).expect("parse config");
+        assert!(resolve_config_secrets(&config).is_ok());
+    }
+
+    #[test]
     fn resolve_config_secrets_accepts_healthy_file_backed_token() {
         let dir = tempdir().expect("tempdir");
         fs::write(dir.path().join("token.txt"), b"a-real-strong-token").expect("write token file");

@@ -1140,6 +1140,48 @@ fn rejects_duplicate_control_api_tokens_with_conflicting_metadata() {
 }
 
 #[test]
+fn accepts_repeated_bearer_token_with_identical_role_and_actor() {
+    let dir = tempdir().expect("tempdir");
+    let (cert, key) = write_test_certs(dir.path());
+    let mut cfg = base_config(&cert.to_string_lossy(), &key.to_string_lossy());
+    cfg.observability.control_api.enabled = true;
+    cfg.observability.control_api.auth_token = None;
+    cfg.observability.control_api.auth.bearer_tokens = vec![
+        ControlApiBearerToken {
+            token: "same-token".to_string(),
+            token_ref: None,
+            role: ControlApiRole::Viewer,
+            actor_id: Some("alice".to_string()),
+        },
+        ControlApiBearerToken {
+            token: "same-token".to_string(),
+            token_ref: None,
+            role: ControlApiRole::Viewer,
+            actor_id: Some("alice".to_string()),
+        },
+    ];
+
+    assert!(validate(&cfg).is_ok());
+}
+
+#[test]
+fn rejects_legacy_auth_token_duplicated_by_bearer_token_with_conflicting_role() {
+    let dir = tempdir().expect("tempdir");
+    let (cert, key) = write_test_certs(dir.path());
+    let mut cfg = base_config(&cert.to_string_lossy(), &key.to_string_lossy());
+    cfg.observability.control_api.enabled = true;
+    cfg.observability.control_api.auth_token = Some("shared-admin-token".to_string());
+    cfg.observability.control_api.auth.bearer_tokens = vec![ControlApiBearerToken {
+        token: "shared-admin-token".to_string(),
+        token_ref: None,
+        role: ControlApiRole::Viewer,
+        actor_id: Some("viewer".to_string()),
+    }];
+
+    assert!(validate(&cfg).is_err());
+}
+
+#[test]
 fn accepts_control_api_with_bearer_tokens_and_no_legacy_auth_token() {
     let dir = tempdir().expect("tempdir");
     let (cert, key) = write_test_certs(dir.path());
