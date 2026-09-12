@@ -2,6 +2,13 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+pub(crate) fn is_known_placeholder_token(token: &str) -> bool {
+    matches!(
+        token.trim().to_ascii_lowercase().as_str(),
+        "replace-with-strong-token" | "change-me" | "changeme" | "replace-me"
+    )
+}
+
 #[path = "config/core.rs"]
 mod core;
 #[path = "config/listener.rs"]

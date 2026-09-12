@@ -1,6 +1,7 @@
-use std::net::IpAddr;
+use std::{collections::HashMap, net::IpAddr};
 
 use super::*;
+use crate::config::ControlApiRole;
 use crate::validator::{
     helpers::validate_pem_certificate_directory, secrets::validate_secret_source_exclusivity,
 };
@@ -31,13 +32,6 @@ fn is_valid_cidr(cidr: &str) -> bool {
     valid_prefix_len(addr.trim(), prefix.trim())
 }
 
-fn is_known_placeholder_token(token: &str) -> bool {
-    matches!(
-        token.trim().to_ascii_lowercase().as_str(),
-        "replace-with-strong-token" | "change-me" | "changeme" | "replace-me"
-    )
-}
-
 pub(super) fn validate_control_api_authentication(control_api: &ControlApi) -> bool {
     if let Some(token) = control_api.auth_token.as_ref()
         && token.trim().is_empty()
@@ -46,7 +40,7 @@ pub(super) fn validate_control_api_authentication(control_api: &ControlApi) -> b
         return false;
     }
     if let Some(token) = control_api.auth_token.as_ref()
-        && is_known_placeholder_token(token)
+        && crate::config::is_known_placeholder_token(token)
     {
         validation_error!("observability.control_api.auth_token must not use a placeholder value");
         return false;
@@ -80,12 +74,67 @@ pub(super) fn validate_control_api_authentication(control_api: &ControlApi) -> b
         ) {
             return false;
         }
+        if has_literal_token && crate::config::is_known_placeholder_token(&token.token) {
+            validation_error!(
+                "observability.control_api.auth.bearer_tokens[{}].token must not use a placeholder value",
+                idx
+            );
+            return false;
+        }
+        if let Some(token_ref) = token.token_ref.as_ref()
+            && token_ref
+                .raw_value()
+                .strip_prefix("literal:")
+                .is_some_and(crate::config::is_known_placeholder_token)
+        {
+            validation_error!(
+                "observability.control_api.auth.bearer_tokens[{}].token_ref must not resolve to a placeholder value",
+                idx
+            );
+            return false;
+        }
         if let Some(actor_id) = token.actor_id.as_ref()
             && actor_id.trim().is_empty()
         {
             validation_error!(
                 "observability.control_api.auth.bearer_tokens[{}].actor_id cannot be empty when provided",
                 idx
+            );
+            return false;
+        }
+    }
+
+    let mut seen_tokens: HashMap<&str, (ControlApiRole, Option<&str>, String)> = HashMap::new();
+    if let Some(token) = control_api.auth_token.as_deref()
+        && let Some(previous) = seen_tokens.insert(
+            token,
+            (ControlApiRole::Admin, None, "auth_token".to_string()),
+        )
+        && (previous.0 != ControlApiRole::Admin || previous.1.is_some())
+    {
+        validation_error!(
+            "observability.control_api.auth_token duplicates {} with conflicting role or actor",
+            previous.2
+        );
+        return false;
+    }
+    for (idx, token) in control_api.auth.bearer_tokens.iter().enumerate() {
+        if token.token.trim().is_empty() {
+            continue;
+        }
+        if let Some(previous) = seen_tokens.insert(
+            token.token.as_str(),
+            (
+                token.role,
+                token.actor_id.as_deref(),
+                format!("auth.bearer_tokens[{idx}].token"),
+            ),
+        ) && (previous.0 != token.role || previous.1 != token.actor_id.as_deref())
+        {
+            validation_error!(
+                "observability.control_api.auth.bearer_tokens[{}].token duplicates {} with conflicting role or actor",
+                idx,
+                previous.2
             );
             return false;
         }
@@ -191,7 +240,6 @@ pub(super) fn validate_control_api_security(control_api: &ControlApi) -> bool {
     {
         return false;
     }
-
     if control_api.authorization.runtime_mutate_role < control_api.authorization.runtime_read_role {
         validation_error!(
             "observability.control_api.authorization.runtime_mutate_role must be at least as privileged as runtime_read_role"
