@@ -270,7 +270,6 @@ impl QUICListener {
             &activation_request,
             &reload_input,
         );
-        let current_log_level = runtime.startup().log_config.level.clone();
         let Some(activation) = Self::run_control_api_blocking({
             let runtime_bundle_handle = Arc::clone(&runtime_bundle_handle);
             move || {
@@ -326,29 +325,6 @@ impl QUICListener {
         }
         if !activation.succeeded() {
             return Err(ControlApiActivationError::Activation(Box::new(activation)));
-        }
-        let Some(generation) = activation.activated_generation else {
-            return Err(ControlApiActivationError::Response(Box::new(
-                Self::json_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({
-                        "reloaded": false,
-                        "error": "activation succeeded without an activated generation",
-                    }),
-                ),
-            )));
-        };
-        let next_log_level = runtime_bundle_handle
-            .current_view()
-            .startup()
-            .log_config
-            .level
-            .clone();
-        if let Err(err) = Self::apply_live_log_level_reload(&current_log_level, &next_log_level) {
-            error!(
-                "Runtime reload applied generation={} but failed to update live log.level from '{}' to '{}': {}",
-                generation, current_log_level, next_log_level, err
-            );
         }
         Ok(activation)
     }

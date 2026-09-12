@@ -1,13 +1,15 @@
 use std::{
-    fs::{OpenOptions, create_dir_all},
+    fs::{File, OpenOptions, create_dir_all},
     io::Write,
-    os::unix::fs::OpenOptionsExt,
     path::Path,
     sync::{
         Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 use env_logger::{Builder, Target};
 use log::LevelFilter;
@@ -130,13 +132,7 @@ fn configure_and_init_logger(
         // Restrict newly-created log files (0o640, not world-readable) and
         // refuse to follow a symlinked path — the log is opened as root before
         // privilege drop, so a symlink there would be a root-write primitive.
-        let file = match OpenOptions::new()
-            .create(true)
-            .append(true)
-            .mode(0o640)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(log_file)
-        {
+        let file = match open_log_file(log_file) {
             Ok(file) => file,
             Err(err) => {
                 eprintln!("{}", build_open_log_file_error(log_file, &err));
@@ -149,6 +145,30 @@ fn configure_and_init_logger(
     // else → default (stderr)
 
     try_init_builder(builder, level)
+}
+
+fn open_log_file(log_file: &str) -> std::io::Result<File> {
+    let file = {
+        let mut options = OpenOptions::new();
+        options.create(true).append(true);
+        #[cfg(unix)]
+        {
+            options.mode(0o640).custom_flags(libc::O_NOFOLLOW);
+        }
+        options.open(log_file)?
+    };
+
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "application log path is not a regular file",
+        ));
+    }
+
+    #[cfg(unix)]
+    file.set_permissions(std::fs::Permissions::from_mode(0o640))?;
+
+    Ok(file)
 }
 
 fn try_init_builder(mut builder: Builder, effective_level: LevelFilter) -> LoggerInitStatus {
@@ -176,5 +196,25 @@ fn parse_log_level_filter(level: &str) -> Result<LevelFilter, LogLevelError> {
         "poltergeist" | "error" => Ok(LevelFilter::Error),
         "silence" | "off" => Ok(LevelFilter::Off),
         _ => Err(LogLevelError::new(level)),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::open_log_file;
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    #[test]
+    fn open_log_file_tightens_preexisting_permissions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("application.log");
+        fs::write(&path, b"existing log\n").expect("seed log");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o666)).expect("set permissive mode");
+
+        let file = open_log_file(path.to_str().expect("log path")).expect("open log");
+        assert_eq!(
+            file.metadata().expect("metadata").permissions().mode() & 0o777,
+            0o640
+        );
     }
 }

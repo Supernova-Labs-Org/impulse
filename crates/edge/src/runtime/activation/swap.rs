@@ -41,11 +41,26 @@ pub(super) fn commit_runtime_bundle_swap(
     previous_status: RuntimeGenerationRecordStatus,
     expected_generation: Option<GenerationId>,
 ) -> Result<GenerationId, ProxyError> {
+    let current_log_level = handle.current_view().startup().log_config.level.clone();
+    let next_log_level = next_runtime.startup.log_config.level.clone();
     QUICListener::spawn_generation_background_tasks_for_runtime(
         &next_runtime.runtime_config,
         next_runtime.shared_state.as_ref(),
     );
-    handle.replace_with_archive_status(next_runtime, previous_status, expected_generation)
+    let result =
+        handle.replace_with_archive_status(next_runtime, previous_status, expected_generation);
+    if result.is_ok()
+        && current_log_level != next_log_level
+        && let Err(err) = impulse_utils::logger::set_log_level(&next_log_level)
+    {
+        log::error!(
+            "runtime bundle committed but failed to update live log.level from '{}' to '{}': {}",
+            current_log_level,
+            next_log_level,
+            err
+        );
+    }
+    result
 }
 
 pub(super) fn prepare_rollback_bundle(

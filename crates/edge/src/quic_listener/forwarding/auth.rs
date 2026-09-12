@@ -419,6 +419,12 @@ async fn run_http_external_auth(
 }
 
 async fn fetch_json_document(uri: String, timeout: Duration) -> Result<Value, ProxyError> {
+    tokio::time::timeout(timeout, fetch_json_document_inner(uri, timeout))
+        .await
+        .map_err(|_| ProxyError::Timeout)?
+}
+
+async fn fetch_json_document_inner(uri: String, timeout: Duration) -> Result<Value, ProxyError> {
     let request = Request::builder()
         .method(http::Method::GET)
         .uri(uri)
@@ -841,6 +847,85 @@ mod tests {
         );
         assert_eq!(cache.entries.len(), OIDC_METADATA_CACHE_MAX_ENTRIES);
     }
+
+    /// Runs a raw TCP server that sends full HTTP headers advertising
+    /// `body_len` bytes, then either stalls forever without writing the body
+    /// (`stall = true`) or completes normally (`stall = false`). Returns the
+    /// bound address; the listener task is detached and exits when the
+    /// process/test ends.
+    async fn spawn_http_response_server(body_len: usize, stall: bool) -> std::net::SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock discovery server");
+        let addr = listener.local_addr().expect("mock server addr");
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut buf = [0u8; 1024];
+                    // Drain the request so the client isn't blocked writing it.
+                    let _ = stream.read(&mut buf).await;
+                    let headers = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {body_len}\r\n\r\n"
+                    );
+                    if stream.write_all(headers.as_bytes()).await.is_err() {
+                        return;
+                    }
+                    if stall {
+                        // Never write the body; hold the connection open.
+                        std::future::pending::<()>().await;
+                    } else {
+                        let body = "{}".as_bytes();
+                        let _ = stream.write_all(body).await;
+                        let _ = stream.shutdown().await;
+                    }
+                });
+            }
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn fetch_json_document_times_out_when_discovery_stalls_after_headers() {
+        let addr = spawn_http_response_server(2, true).await;
+        let uri = format!("http://{addr}/.well-known/openid-configuration");
+
+        let started = std::time::Instant::now();
+        let result = fetch_json_document(uri, Duration::from_millis(200)).await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            matches!(result, Err(ProxyError::Timeout)),
+            "expected a timeout error, got: {result:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "fetch_json_document must not hang past its deadline, took {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_json_document_recovers_once_discovery_becomes_healthy() {
+        // Reproduces the fix direction's exact scenario: a discovery server
+        // that stalls after headers, then later serves a normal response —
+        // confirms the lock/timeout path doesn't leave anything wedged.
+        let stalled_addr = spawn_http_response_server(2, true).await;
+        let stalled_uri = format!("http://{stalled_addr}/.well-known/openid-configuration");
+        let stalled_result = fetch_json_document(stalled_uri, Duration::from_millis(200)).await;
+        assert!(matches!(stalled_result, Err(ProxyError::Timeout)));
+
+        let healthy_addr = spawn_http_response_server(2, false).await;
+        let healthy_uri = format!("http://{healthy_addr}/.well-known/openid-configuration");
+        let healthy_result = fetch_json_document(healthy_uri, Duration::from_millis(200)).await;
+        assert!(
+            healthy_result.is_ok(),
+            "a subsequent healthy discovery server must succeed: {healthy_result:?}"
+        );
+    }
+
     use crate::{
         quic_listener::admission::{
             AdmissionPolicyDecision, UnauthorizedDecision, admission_rejection_response,

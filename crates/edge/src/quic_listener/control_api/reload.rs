@@ -32,18 +32,6 @@ pub(super) mod request_body;
 pub(super) mod rollback;
 
 impl QUICListener {
-    pub(super) fn apply_live_log_level_reload(
-        current_level: &str,
-        next_level: &str,
-    ) -> Result<bool, impulse_utils::logger::LogLevelError> {
-        if current_level == next_level {
-            return Ok(false);
-        }
-
-        impulse_utils::logger::set_log_level(next_level)?;
-        Ok(true)
-    }
-
     pub(super) fn reload_listener_certs(
         listener_runtime_configs: &HashMap<String, ListenerRuntimeConfig>,
         listener_tls_store: &ListenerTlsReloadStore,
