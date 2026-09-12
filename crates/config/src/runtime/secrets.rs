@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fmt, fs,
     path::{Component, Path, PathBuf},
     sync::Arc,
@@ -11,7 +12,10 @@ use sha2::{Digest, Sha256};
 use super::RuntimeConfigError;
 use crate::{
     bounded_file::{BoundedFileReadError, read_file_with_limit},
-    config::{Config, ControlApiBearerToken, ExternalAuth, SecretProvider, SecretRef, Secrets},
+    config::{
+        Config, ControlApiBearerToken, ControlApiRole, ExternalAuth, SecretProvider, SecretRef,
+        Secrets,
+    },
 };
 
 const MAX_FILE_BACKED_SECRET_BYTES: u64 = 1024 * 1024;
@@ -43,6 +47,8 @@ pub enum RuntimeSecretResolutionErrorKind {
     InvalidBaseDirectory,
     PathOutsideBaseDir,
     EmptySecret,
+    PlaceholderToken,
+    DuplicateToken,
     SecretTooLarge,
     Io,
     InvalidUtf8,
@@ -63,6 +69,8 @@ impl RuntimeSecretResolutionErrorKind {
             Self::InvalidBaseDirectory => "invalid_base_directory",
             Self::PathOutsideBaseDir => "path_outside_base_dir",
             Self::EmptySecret => "empty_secret",
+            Self::PlaceholderToken => "placeholder_token",
+            Self::DuplicateToken => "duplicate_token",
             Self::SecretTooLarge => "secret_too_large",
             Self::Io => "io_error",
             Self::InvalidUtf8 => "invalid_utf8",
@@ -531,8 +539,7 @@ pub fn resolve_config_secrets(config: &Config) -> Result<Config, RuntimeConfigEr
             )
             .map_err(runtime_secret_config_error)?;
         resolved.observability.control_api.auth_token = Some(
-            token
-                .into_string("observability.control_api.auth_token_ref")
+            resolved_control_api_token(token, "observability.control_api.auth_token_ref")
                 .map_err(runtime_secret_config_error)?,
         );
         resolved.observability.control_api.auth_token_ref = None;
@@ -550,7 +557,49 @@ pub fn resolve_config_secrets(config: &Config) -> Result<Config, RuntimeConfigEr
             .map_err(runtime_secret_config_error)?;
     }
 
+    validate_resolved_control_api_tokens(&resolved).map_err(runtime_secret_config_error)?;
+
     Ok(resolved)
+}
+
+fn validate_resolved_control_api_tokens(
+    config: &Config,
+) -> Result<(), RuntimeSecretResolutionError> {
+    let control_api = &config.observability.control_api;
+    let mut seen: HashMap<&str, (ControlApiRole, Option<&str>, String)> = HashMap::new();
+
+    if let Some(token) = control_api.auth_token.as_deref() {
+        seen.insert(
+            token,
+            (
+                ControlApiRole::Admin,
+                None,
+                "observability.control_api.auth_token".to_string(),
+            ),
+        );
+    }
+
+    for (index, token) in control_api.auth.bearer_tokens.iter().enumerate() {
+        if let Some(previous) = seen.insert(
+            token.token.as_str(),
+            (
+                token.role,
+                token.actor_id.as_deref(),
+                format!("observability.control_api.auth.bearer_tokens[{index}].token"),
+            ),
+        ) && (previous.0 != token.role || previous.1 != token.actor_id.as_deref())
+        {
+            return Err(RuntimeSecretResolutionError::new(
+                format!(
+                    "observability.control_api.auth.bearer_tokens[{index}].token conflicts with {}",
+                    previous.2
+                ),
+                Some(RuntimeSecretSourceKind::Literal),
+                RuntimeSecretResolutionErrorKind::DuplicateToken,
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn filesystem_provider_from_config(
@@ -559,6 +608,22 @@ fn filesystem_provider_from_config(
     provider.map(|SecretProvider::File { base_dir }| {
         FilesystemSecretProvider::new(base_dir.as_deref().map(PathBuf::from))
     })
+}
+
+fn resolved_control_api_token(
+    secret: RuntimeResolvedSecret,
+    field_name: &str,
+) -> Result<String, RuntimeSecretResolutionError> {
+    let source_kind = secret.metadata().source_kind;
+    let value = secret.into_string(field_name)?;
+    if crate::config::is_known_placeholder_token(&value) {
+        return Err(RuntimeSecretResolutionError::new(
+            field_name,
+            Some(source_kind),
+            RuntimeSecretResolutionErrorKind::PlaceholderToken,
+        ));
+    }
+    Ok(value)
 }
 
 fn resolve_control_api_bearer_token(
@@ -575,9 +640,10 @@ fn resolve_control_api_bearer_token(
         token.token_ref.as_ref(),
         &format!("observability.control_api.auth.bearer_tokens[{index}].token_ref"),
     )?;
-    token.token = resolved.into_string(&format!(
-        "observability.control_api.auth.bearer_tokens[{index}].token_ref"
-    ))?;
+    token.token = resolved_control_api_token(
+        resolved,
+        &format!("observability.control_api.auth.bearer_tokens[{index}].token_ref"),
+    )?;
     token.token_ref = None;
     Ok(())
 }
@@ -935,6 +1001,167 @@ mod tests {
         assert_eq!(
             err.kind(),
             RuntimeSecretResolutionErrorKind::PathOutsideBaseDir
+        );
+    }
+
+    fn minimal_config_yaml() -> String {
+        r#"
+listen:
+  tls: {}
+upstream:
+  api:
+    route: {}
+    backends:
+      - id: backend1
+        address: "127.0.0.1:7001"
+"#
+        .to_string()
+    }
+
+    #[test]
+    fn resolve_config_secrets_rejects_placeholder_token_from_file_reference() {
+        let dir = tempdir().expect("tempdir");
+        fs::write(dir.path().join("token.txt"), b"change-me").expect("write token file");
+
+        let mut yaml = minimal_config_yaml();
+        yaml.push_str(&format!(
+            r#"
+observability:
+  control_api:
+    enabled: true
+    auth:
+      bearer_tokens:
+        - token_ref:
+            ref: "file://{}/token.txt"
+          role: admin
+          actor_id: admin
+"#,
+            dir.path().to_string_lossy()
+        ));
+
+        let config: Config = serde_yaml::from_str(&yaml).expect("parse config");
+        let err = resolve_config_secrets(&config).expect_err("placeholder token must be rejected");
+        assert!(err.to_string().contains("placeholder_token"));
+    }
+
+    #[test]
+    fn resolve_config_secrets_rejects_duplicate_tokens_with_conflicting_roles() {
+        let dir = tempdir().expect("tempdir");
+        fs::write(dir.path().join("token.txt"), b"shared-secret-value").expect("write token file");
+
+        let mut yaml = minimal_config_yaml();
+        yaml.push_str(&format!(
+            r#"
+observability:
+  control_api:
+    enabled: true
+    auth:
+      bearer_tokens:
+        - token_ref:
+            ref: "file://{path}/token.txt"
+          role: viewer
+          actor_id: alice
+        - token: "shared-secret-value"
+          role: admin
+          actor_id: bob
+"#,
+            path = dir.path().to_string_lossy()
+        ));
+
+        let config: Config = serde_yaml::from_str(&yaml).expect("parse config");
+        let err =
+            resolve_config_secrets(&config).expect_err("conflicting duplicate must be rejected");
+        assert!(err.to_string().contains("duplicate_token"));
+    }
+
+    #[test]
+    fn resolve_config_secrets_rejects_two_distinct_file_refs_resolving_to_same_value() {
+        let dir = tempdir().expect("tempdir");
+        fs::write(dir.path().join("a.txt"), b"shared-secret-value").expect("write token file a");
+        fs::write(dir.path().join("b.txt"), b"shared-secret-value").expect("write token file b");
+
+        let mut yaml = minimal_config_yaml();
+        yaml.push_str(&format!(
+            r#"
+observability:
+  control_api:
+    enabled: true
+    auth:
+      bearer_tokens:
+        - token_ref:
+            ref: "file://{path}/a.txt"
+          role: viewer
+          actor_id: alice
+        - token_ref:
+            ref: "file://{path}/b.txt"
+          role: admin
+          actor_id: bob
+"#,
+            path = dir.path().to_string_lossy()
+        ));
+
+        let config: Config = serde_yaml::from_str(&yaml).expect("parse config");
+        let err =
+            resolve_config_secrets(&config).expect_err("conflicting duplicate must be rejected");
+        assert!(err.to_string().contains("duplicate_token"));
+    }
+
+    #[test]
+    fn resolve_config_secrets_accepts_repeated_file_backed_token_with_identical_role_and_actor() {
+        let dir = tempdir().expect("tempdir");
+        fs::write(dir.path().join("a.txt"), b"shared-secret-value").expect("write token file a");
+        fs::write(dir.path().join("b.txt"), b"shared-secret-value").expect("write token file b");
+
+        let mut yaml = minimal_config_yaml();
+        yaml.push_str(&format!(
+            r#"
+observability:
+  control_api:
+    enabled: true
+    auth:
+      bearer_tokens:
+        - token_ref:
+            ref: "file://{path}/a.txt"
+          role: admin
+          actor_id: admin
+        - token_ref:
+            ref: "file://{path}/b.txt"
+          role: admin
+          actor_id: admin
+"#,
+            path = dir.path().to_string_lossy()
+        ));
+
+        let config: Config = serde_yaml::from_str(&yaml).expect("parse config");
+        assert!(resolve_config_secrets(&config).is_ok());
+    }
+
+    #[test]
+    fn resolve_config_secrets_accepts_healthy_file_backed_token() {
+        let dir = tempdir().expect("tempdir");
+        fs::write(dir.path().join("token.txt"), b"a-real-strong-token").expect("write token file");
+
+        let mut yaml = minimal_config_yaml();
+        yaml.push_str(&format!(
+            r#"
+observability:
+  control_api:
+    enabled: true
+    auth:
+      bearer_tokens:
+        - token_ref:
+            ref: "file://{}/token.txt"
+          role: admin
+          actor_id: admin
+"#,
+            dir.path().to_string_lossy()
+        ));
+
+        let config: Config = serde_yaml::from_str(&yaml).expect("parse config");
+        let resolved = resolve_config_secrets(&config).expect("healthy token should resolve");
+        assert_eq!(
+            resolved.observability.control_api.auth.bearer_tokens[0].token,
+            "a-real-strong-token"
         );
     }
 }
