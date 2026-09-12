@@ -3051,21 +3051,12 @@ upstream:
 <h3 id="log-levels">Log Levels</h3>
 <p>Log levels in order of increasing verbosity:</p>
 <ul>
-<li><code>silence</code>: No logging output</li>
-<li><code>poltergeist</code>: Error messages only</li>
-<li><code>scream</code>: Warnings and errors</li>
-<li><code>impulse</code>: Informational messages, warnings, and errors</li>
-<li><code>haunt</code>: Debug information</li>
-<li><code>whisper</code>: Trace-level debugging</li>
-</ul>
-<p>Standard log level mapping:</p>
-<ul>
-<li><code>silence</code> = off</li>
-<li><code>poltergeist</code> = error</li>
-<li><code>scream</code> = warn</li>
-<li><code>impulse</code> = info</li>
-<li><code>haunt</code> = debug</li>
-<li><code>whisper</code> = trace</li>
+<li><code>off</code>: No logging output</li>
+<li><code>error</code>: Error messages only</li>
+<li><code>warn</code>: Warnings and errors</li>
+<li><code>info</code>: Informational messages, warnings, and errors</li>
+<li><code>debug</code>: Debug information</li>
+<li><code>trace</code>: Trace-level debugging</li>
 </ul>
 <h3 id="examples_5">Examples</h3>
 <pre><code class="language-yaml"># stderr only (default)
@@ -3088,12 +3079,12 @@ log:
 
 # Development — debug to stderr
 log:
-  level: haunt  # debug level
+  level: debug  # debug level
   format: plain
 
 # Troubleshooting — trace to file
 log:
-  level: whisper  # trace level
+  level: trace  # trace level
   format: json
   file:
     enabled: true
