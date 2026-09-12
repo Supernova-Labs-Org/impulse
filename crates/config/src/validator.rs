@@ -25,20 +25,7 @@ pub(crate) use helpers::{
     is_valid_http_token, is_valid_https_or_loopback_http_url, is_valid_https_url,
 };
 
-pub const VALID_LOG_LEVELS: &[&str] = &[
-    "whisper",
-    "haunt",
-    "impulse",
-    "scream",
-    "poltergeist",
-    "silence",
-    "trace",
-    "debug",
-    "info",
-    "warn",
-    "error",
-    "off",
-];
+pub const VALID_LOG_LEVELS: &[&str] = &["trace", "debug", "info", "warn", "error", "off"];
 
 pub const VALID_LB_TYPES: &[&str] = &[
     "random",

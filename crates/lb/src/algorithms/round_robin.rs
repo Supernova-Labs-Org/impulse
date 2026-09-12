@@ -148,8 +148,7 @@ impl Default for RoundRobin {
 mod tests {
     use impulse_config::config::{Backend, HealthCheck};
 
-    use super::RoundRobin;
-    use super::{MAX_WEIGHTED_SCHEDULE_LENGTH, build_weighted_sequence};
+    use super::{MAX_WEIGHTED_SCHEDULE_LENGTH, RoundRobin, build_weighted_sequence};
     use crate::{backend::BackendState, backend_pool::BackendPool};
 
     fn create_backend_state(address: &str, weight: u32) -> BackendState {

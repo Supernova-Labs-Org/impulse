@@ -36,17 +36,11 @@ fn set_log_level_accepts_all_supported_aliases() {
     let _guard = logger_test_guard();
 
     let cases = [
-        ("whisper", LevelFilter::Trace),
         ("trace", LevelFilter::Trace),
-        ("haunt", LevelFilter::Debug),
         ("debug", LevelFilter::Debug),
-        ("impulse", LevelFilter::Info),
         ("info", LevelFilter::Info),
-        ("scream", LevelFilter::Warn),
         ("warn", LevelFilter::Warn),
-        ("poltergeist", LevelFilter::Error),
         ("error", LevelFilter::Error),
-        ("silence", LevelFilter::Off),
         ("off", LevelFilter::Off),
     ];
 
